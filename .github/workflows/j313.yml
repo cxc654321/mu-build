@@ -1,0 +1,97 @@
+name: j313
+
+# Native Mu firmware build for J313 (MacBookAir10,1 / MacBook Air M1, 2020),
+# platform MacBookAirMid2020Pkg. One device, one variable: the build path is
+# Tools/mu-build, exactly what a developer runs locally.
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: 'Device from Platform/Features.py DEVICES'
+        default: j313
+      without:
+        description: 'Space-separated features to turn off'
+        default: ''
+
+jobs:
+  build:
+    name: Build ${{ github.event.inputs.device || 'j313' }} firmware
+    runs-on: macos-14
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        run: |
+          brew update --quiet || true
+          brew install llvm lld acpica nasm
+          /opt/homebrew/opt/llvm/bin/clang --version | head -2
+          command -v lld-link iasl nasm
+
+      - name: Show resolved configuration
+        env:
+          DEVICE: ${{ github.event.inputs.device || 'j313' }}
+        run: |
+          python3.12 Tools/features.py --resolve "$DEVICE" "" "" || true
+          python3.12 Tools/features.py --summary "$DEVICE" || true
+
+      - name: Build and seal
+        id: build
+        continue-on-error: true
+        env:
+          DEVICE: ${{ github.event.inputs.device || 'j313' }}
+          WITHOUT: ${{ github.event.inputs.without }}
+          AURORADBG_MU_PYTHON: python3.12
+          NTASI_MU_OUTPUT_ROOT: ${{ github.workspace }}/build-out
+        run: |
+          set -eu
+          args=""
+          for feature in $WITHOUT; do args="$args --without $feature"; done
+          sh Tools/mu-build "$DEVICE" $args
+          echo "built=1" >> "$GITHUB_OUTPUT"
+
+      - name: Extract build diagnostics
+        if: always()
+        run: |
+          LOG=$(find build-out -name 'native-build.log' | head -1)
+          if [ -z "$LOG" ]; then echo "no native-build.log found"; exit 0; fi
+          echo "== $LOG =="
+          grep -nE 'error:|error F[0-9]+|ERROR|undefined symbol|Building ...' "$LOG" \
+            | grep -vE ' - (Building \.\.\.|Done)' | tail -60 || true
+          echo "=== first failing module context ==="
+          grep -nE 'Building \.\.\. ' "$LOG" | tail -5 || true
+
+      - name: Collect firmware
+        if: always()
+        run: |
+          mkdir -p dist
+          if [ -d build-out ]; then
+            find build-out -path '*/artifacts/*' -type f \( -name '*.fd' -o -name 'manifest.json' \) -exec cp {} dist/ \; 2>/dev/null || true
+          fi
+          ls -lh dist || true
+          for f in dist/*.fd; do [ -e "$f" ] || continue; shasum -a 256 "$f" | tee -a dist/SHA256SUMS.txt; done
+
+      - uses: actions/upload-artifact@v4
+        if: always() && hashFiles('dist/*') != ''
+        with:
+          name: mu-firmware-${{ github.event.inputs.device || 'j313' }}
+          path: dist/
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-log
+          path: build-out/**/native-build.log
+          if-no-files-found: ignore
+
+      - name: Fail if build failed
+        if: steps.build.outcome != 'success'
+        run: exit 1
