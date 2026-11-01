@@ -1,0 +1,49 @@
+/** @file
+  PCI Express Memory Mapped Configuration Space Base Address Description Table
+  for the MacBook Pro (Early 2023) platform.
+
+ * Copyright (c) 2026 Aurora Silicon
+  SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
+**/
+
+#include <Library/AcpiLib.h>
+#include <IndustryStandard/Acpi65.h>
+#include <IndustryStandard/MemoryMappedConfigurationSpaceAccessTable.h>
+#include <Acpi/AcpiHeader.h>
+
+#pragma pack(1)
+
+typedef struct {
+  EFI_ACPI_MEMORY_MAPPED_CONFIGURATION_BASE_ADDRESS_TABLE_HEADER          Header;
+  EFI_ACPI_MEMORY_MAPPED_ENHANCED_CONFIGURATION_SPACE_BASE_ADDRESS_ALLOCATION_STRUCTURE Allocation;
+} NTASI_MCFG_TABLE;
+
+STATIC NTASI_MCFG_TABLE Mcfg = {
+  {
+    __ACPI_HEADER (
+      EFI_ACPI_6_5_PCI_EXPRESS_MEMORY_MAPPED_CONFIGURATION_SPACE_BASE_ADDRESS_DESCRIPTION_TABLE_SIGNATURE,
+      NTASI_MCFG_TABLE,
+      EFI_ACPI_MEMORY_MAPPED_CONFIGURATION_SPACE_ACCESS_TABLE_REVISION
+      ),
+    0
+  },
+  {
+    //
+    // Every field from a PCD the SoC family package sets from the apcie node's
+    // reg[0] and the bus range, rather than the one SoC this file was copied
+    // from. EndBusNumber was 4 -- the bus count J414s' root complex happens to
+    // present -- which would have hidden every device above bus 4 on a machine
+    // whose topology is deeper.
+    //
+    FixedPcdGet64 (PcdPciExpressBaseAddress),  // BaseAddress
+    0,                                         // PciSegmentGroupNumber
+    FixedPcdGet32 (PcdPciBusMin),              // StartBusNumber
+    FixedPcdGet32 (PcdPciBusMax),              // EndBusNumber
+    0                                          // Reserved
+  }
+};
+
+#pragma pack()
+
+// Prevent the optimizer from removing the generated ACPI table.
+VOID *CONST ReferenceAcpiTable = &Mcfg;

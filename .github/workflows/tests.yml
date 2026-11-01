@@ -1,0 +1,44 @@
+name: tests
+
+# Every branch the fork works on, and every PR whatever its base.
+on:
+  push:
+    branches: [ main, staging, M5-Dev, refactor ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  host-tests:
+    name: Host tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-14 ]
+
+    steps:
+      - uses: actions/checkout@v5
+        # No submodules. Every test under Tests/ compiles a standalone C file
+        # against Tests/edk2stub and runs it; none of them needs MU_BASECORE,
+        # which is 1.8 GB of checkout for nothing.
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Generated device-tree windows are current
+        # Cheap and first: if someone bumped DeviceTree/ without regenerating,
+        # every window in the ACPI tables is quietly stale and this says so in
+        # two seconds rather than after a firmware build.
+        run: python3 Tools/dtwindows.py check
+
+      - name: Run the host tests
+        working-directory: Tests
+        run: |
+          set -eu
+          status=0
+          for test in test_*.py; do
+            echo "== $test"
+            python3 -m unittest "${test%.py}" || status=1
+          done
+          exit $status

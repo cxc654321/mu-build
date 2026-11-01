@@ -1,0 +1,13 @@
+# Copyright (c) 2026 Aurora Silicon
+
+[Defines]
+  DEC_SPECIFICATION              = 0x00010005
+  PACKAGE_NAME                   = MacBookAir13M2Pkg
+  PACKAGE_GUID                   = F0DD1629-DBEE-46E1-8252-A4C09C16D0BC
+  PACKAGE_VERSION                = 1.0
+
+[Includes.common]
+  Include
+
+[Guids.common]
+  gMacBookAir13M2PkgTokenSpaceGuid = {0xa9782c84, 0xc9d8, 0x473a, {0x9a, 0xaa, 0xe5, 0xbb, 0x57, 0x20, 0x68, 0x7e} }

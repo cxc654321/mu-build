@@ -1,0 +1,179 @@
+/**
+ * Copyright (c) 2026 AppleWOA authors.
+ *
+ * Module Name:
+ *     PPTT.aslc
+ *
+ * Abstract:
+ *     Processor Properties Topology Table for the T8142 family (Apple M5).
+ *     This is only a temporary implementation until dynamic allocations in
+ *     AcpiPlatformDxe are implemented.
+ *
+ *     T8142 is 10 cores in two ASYMMETRIC clusters:
+ *         cluster 0 -- 6 E-cores ("sawtooth" in the ADT)
+ *         cluster 1 -- 4 P-cores ("everest" in the ADT)
+ *
+ *     Every other SoC package in this tree assumes a uniform CLUSTER_CORE_COUNT
+ *     and builds a single PPTT_CLUSTER type. That cannot represent 6+4, so this
+ *     file declares a distinct type per cluster instead. Do not "simplify" it
+ *     back into the shared shape without checking the core counts first.
+ *
+ * Environment:
+ *     UEFI firmware/runtime services.
+ *
+ * License:
+ *     Copyright (c) 2026 Aurora Silicon
+ *     SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
+ *
+*/
+
+#include <Library/AcpiLib.h>
+#include <Library/ArmLib.h>
+#include <Library/PcdLib.h>
+#include <IndustryStandard/Acpi64.h>
+#include <Acpi/AcpiHeader.h>
+#include <Acpi/SgiAcpiHeader.h>
+
+
+#define DIE_COUNT               1
+#define ECORE_CLUSTER_ID        0
+#define PCORE_CLUSTER_ID        1
+#define ECORE_COUNT             6
+#define PCORE_COUNT             4
+
+//
+// ACPI processor UIDs are assigned in the same order as the ADT and the MADT:
+// E-cores take 0..5, P-cores take 6..9. The MADT GICC entries must use the
+// identical numbering, or the OS will associate the wrong topology with the
+// wrong CPU.
+//
+#define ECORE_UID(CpuId)        (CpuId)
+#define PCORE_UID(CpuId)        (ECORE_COUNT + (CpuId))
+
+
+#pragma pack(1)
+typedef struct {
+    EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR  Core;
+} PPTT_CORE;
+
+typedef struct {
+    EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR  Cluster;
+    PPTT_CORE                              Cores[ECORE_COUNT];
+} PPTT_ECORE_CLUSTER;
+
+typedef struct {
+    EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR  Cluster;
+    PPTT_CORE                              Cores[PCORE_COUNT];
+} PPTT_PCORE_CLUSTER;
+
+typedef struct {
+    EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR  Die;
+    PPTT_ECORE_CLUSTER                     ECoreCluster;
+    PPTT_PCORE_CLUSTER                     PCoreCluster;
+} PPTT_DIE;
+#pragma pack ()
+
+
+//
+// Cores. The parent offset differs per cluster, so unlike the shared
+// implementation there is one core initialiser per cluster type.
+//
+#define ECORE_INIT(DieId, CpuId)                                                                    \
+{                                                                                                   \
+    EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR_INIT (                                                    \
+        0x14,                                                           /* Length */                \
+        PPTT_PROCESSOR_CORE_FLAGS,                                      /* Flag */                  \
+        OFFSET_OF (EFI_ACPI_6_4_PROCESSOR_PROPERTIES_TOPOLOGY_TABLE,                                \
+            Dies[DieId].ECoreCluster),                                  /* Parent */                \
+        ECORE_UID(CpuId),                                               /* ACPI Id */               \
+        0                                                               /* Private resources */     \
+    ),                                                                                              \
+}
+
+#define PCORE_INIT(DieId, CpuId)                                                                    \
+{                                                                                                   \
+    EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR_INIT (                                                    \
+        0x14,                                                           /* Length */                \
+        PPTT_PROCESSOR_CORE_FLAGS,                                      /* Flag */                  \
+        OFFSET_OF (EFI_ACPI_6_4_PROCESSOR_PROPERTIES_TOPOLOGY_TABLE,                                \
+            Dies[DieId].PCoreCluster),                                  /* Parent */                \
+        PCORE_UID(CpuId),                                               /* ACPI Id */               \
+        0                                                               /* Private resources */     \
+    ),                                                                                              \
+}
+
+
+#define ECORE_CLUSTER_INIT(DieId)                                                                   \
+{                                                                                                   \
+    EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR_INIT (                                                    \
+        OFFSET_OF (PPTT_ECORE_CLUSTER, Cores),                          /* Length */                \
+        PPTT_PROCESSOR_CLUSTER_FLAGS,                                   /* Flag */                  \
+        OFFSET_OF (EFI_ACPI_6_4_PROCESSOR_PROPERTIES_TOPOLOGY_TABLE,                                \
+            Dies[DieId].Die),                                           /* Parent */                \
+        ((DieId << 4) | ECORE_CLUSTER_ID),                              /* ACPI Id */               \
+        0                                                               /* Private resources */     \
+    ),                                                                                              \
+    {                                                                                               \
+        ECORE_INIT (DieId, 0),                                                                      \
+        ECORE_INIT (DieId, 1),                                                                      \
+        ECORE_INIT (DieId, 2),                                                                      \
+        ECORE_INIT (DieId, 3),                                                                      \
+        ECORE_INIT (DieId, 4),                                                                      \
+        ECORE_INIT (DieId, 5),                                                                      \
+    },                                                                                              \
+}
+
+#define PCORE_CLUSTER_INIT(DieId)                                                                   \
+{                                                                                                   \
+    EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR_INIT (                                                    \
+        OFFSET_OF (PPTT_PCORE_CLUSTER, Cores),                          /* Length */                \
+        PPTT_PROCESSOR_CLUSTER_FLAGS,                                   /* Flag */                  \
+        OFFSET_OF (EFI_ACPI_6_4_PROCESSOR_PROPERTIES_TOPOLOGY_TABLE,                                \
+            Dies[DieId].Die),                                           /* Parent */                \
+        ((DieId << 4) | PCORE_CLUSTER_ID),                              /* ACPI Id */               \
+        0                                                               /* Private resources */     \
+    ),                                                                                              \
+    {                                                                                               \
+        PCORE_INIT (DieId, 0),                                                                      \
+        PCORE_INIT (DieId, 1),                                                                      \
+        PCORE_INIT (DieId, 2),                                                                      \
+        PCORE_INIT (DieId, 3),                                                                      \
+    },                                                                                              \
+}
+
+#define DIE_INIT(DieId)                                                                             \
+{                                                                                                   \
+    /* Parameters for DIE (Package) */                                                              \
+    EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR_INIT(                                                     \
+        OFFSET_OF(PPTT_DIE, ECoreCluster),                              /* Length */                \
+        PPTT_PROCESSOR_PACKAGE_FLAGS,                                   /* Flag */                  \
+        0,                                                              /* Parent */                \
+        DieId,                                                          /* ACPI Id */               \
+        0                                                               /* Private resources */     \
+    ),                                                                                              \
+    ECORE_CLUSTER_INIT(DieId),                                                                      \
+    PCORE_CLUSTER_INIT(DieId),                                                                      \
+}
+
+
+#pragma pack(1)
+typedef struct {
+    EFI_ACPI_6_4_PROCESSOR_PROPERTIES_TOPOLOGY_TABLE_HEADER  Header;
+    PPTT_DIE                                                 Dies[DIE_COUNT];
+} EFI_ACPI_6_4_PROCESSOR_PROPERTIES_TOPOLOGY_TABLE;
+#pragma pack ()
+
+EFI_ACPI_6_4_PROCESSOR_PROPERTIES_TOPOLOGY_TABLE Pptt = {
+{
+    __ACPI_HEADER (
+        EFI_ACPI_6_4_PROCESSOR_PROPERTIES_TOPOLOGY_TABLE_STRUCTURE_SIGNATURE,
+        EFI_ACPI_6_4_PROCESSOR_PROPERTIES_TOPOLOGY_TABLE,
+        EFI_ACPI_6_4_PROCESSOR_PROPERTIES_TOPOLOGY_TABLE_REVISION
+    )
+    },
+    {
+        DIE_INIT(0),
+    }
+};
+
+VOID * CONST ReferenceAcpiTable = &Pptt;

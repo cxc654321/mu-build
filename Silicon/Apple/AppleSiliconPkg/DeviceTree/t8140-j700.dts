@@ -1,0 +1,224 @@
+// SPDX-License-Identifier: GPL-2.0+ OR MIT
+/*
+ * Apple MacBook Neo (J700), Apple A18 Pro / T8140.
+ *
+ * target-type: J700
+ *
+ * NOT FROM ASAHI. Every other tree in this directory is vendored verbatim from
+ * asahi's arch/arm64/boot/dts/apple. Asahi has no t8140 tree: the Neo is not a
+ * Mac they support, and its bring-up happened in aurora-silicon/neo-bringup
+ * against a live machine.
+ *
+ * This tree exists so that T8140 goes through the same path as every other SoC
+ * -- Tools/mkdtb.sh, then Tools/socfacts.py, then Tools/add-soc.py -- rather
+ * than having its family package hand-written. It is assembled from
+ * aurora-silicon/neo-bringup, whose docs/hardware-inventory.md grades each fact
+ * by evidence. Only rows graded "A; locally verified" are transcribed here, and
+ * each carries the inventory row it came from.
+ *
+ * Provenance, per node:
+ *
+ *   compatible/model   J700 / Mac17,5 / J700AP, Linux compatible apple,j700
+ *                      -- inventory "Root ADT compatible/model"
+ *   memory             base 0x10000000000, 8 GiB
+ *                      -- inventory "RAM base/usable ranges"
+ *   cpus               4E at MPIDR 0..3, 2P at 0x10100..0x10101; the boot CPU
+ *                      is physical CPU 4 / P0
+ *                      -- inventory "CPU topology/MPIDRs", all six verified
+ *   interrupt-controller  AIC v3, 0x301000000, size 0x1cc000; event window from
+ *                      neo-bringup dts/t8140-j700-uboot-smoke.dts
+ *                      -- inventory "AIC generation/config"
+ *   serial (s5l)       0x385200000 -- inventory "Early UART", upstream base
+ *   dockchannel-uart   0x308128000; channel 0 is the full console at
+ *                      0x30812c000, channel 1 the early one at 0x30813c000
+ *                      -- inventory "DockChannel consoles"
+ *   watchdog           0x3082b0000 -- neo-bringup Stage 2 WDT logs
+ *   ans/sart/nvme      coproc 0x389600000, mailbox 0x389608000, SART
+ *                      0x38dc50000, NVMMU 0x38dcc0000, secure NVMe 0x3cdcc0000
+ *                      -- inventory "NVMe/ANS generation" and
+ *                      research/t8140-nvme-dma-permission-fault-audit
+ *   memory-controller  AMCC/MCC 0x220000000 size 0x140000, 4 planes
+ *                      -- inventory "AMCC/MCC protection"
+ *   cpufreq            E/P cluster bases 0x210e00000 / 0x211e00000
+ *                      -- inventory "CPU P-state interface"
+ *   debugusb           0x348000000 -- inventory "DebugUSB"
+ *
+ * DELIBERATELY ABSENT
+ *
+ * PCIe. m1n1's t8140 support is entirely ADT-index driven (regs_t8140 in
+ * src/pcie.c names indices, not addresses) and no capture in neo-bringup
+ * records a root complex address. Inventing one would be the exact failure this
+ * file's provenance discipline exists to prevent. Internal storage does not
+ * need it: ANS is at fixed MMIO above, and AppleNANDStorageDxe reads it from
+ * the live ADT.
+ *
+ * The core `compatible` strings are the one thing here that is a name rather
+ * than a measurement. There is no upstream spelling to copy, so they follow
+ * m1n1's MIDR part names for this SoC (MIDR_PART_T8140_TAHITI_ECORE 0x60,
+ * _PCORE 0x61, inventory "CPU MIDR parts"). Nothing binds to them but the
+ * E-core/P-core classification in Tools/socfacts.py.
+ */
+
+/dts-v1/;
+
+/ {
+	#address-cells = <2>;
+	#size-cells = <2>;
+	compatible = "apple,j700", "apple,t8140", "apple,arm-platform";
+	model = "Apple MacBook Neo";
+
+	aliases {
+		serial0 = &serial0;
+	};
+
+	cpus {
+		#address-cells = <2>;
+		#size-cells = <0>;
+
+		cpu_e00: cpu@0 {
+			device_type = "cpu";
+			compatible = "apple,tahiti-e";
+			reg = <0x0 0x0>;
+			next-level-cache = <&l2_cache_0>;
+		};
+
+		cpu_e01: cpu@1 {
+			device_type = "cpu";
+			compatible = "apple,tahiti-e";
+			reg = <0x0 0x1>;
+			next-level-cache = <&l2_cache_0>;
+		};
+
+		cpu_e02: cpu@2 {
+			device_type = "cpu";
+			compatible = "apple,tahiti-e";
+			reg = <0x0 0x2>;
+			next-level-cache = <&l2_cache_0>;
+		};
+
+		cpu_e03: cpu@3 {
+			device_type = "cpu";
+			compatible = "apple,tahiti-e";
+			reg = <0x0 0x3>;
+			next-level-cache = <&l2_cache_0>;
+		};
+
+		/*
+		 * Physical CPU 4. Firmware boots here, and Linux calls it logical
+		 * CPU 0. The ADT numbers it 0x100; the architectural MPIDR below
+		 * is what the FDT and the MADT use.
+		 */
+		cpu_p00: cpu@10100 {
+			device_type = "cpu";
+			compatible = "apple,tahiti-p";
+			reg = <0x0 0x10100>;
+			next-level-cache = <&l2_cache_1>;
+		};
+
+		cpu_p01: cpu@10101 {
+			device_type = "cpu";
+			compatible = "apple,tahiti-p";
+			reg = <0x0 0x10101>;
+			next-level-cache = <&l2_cache_1>;
+		};
+
+		l2_cache_0: l2-cache-0 {
+			compatible = "cache";
+			cache-level = <2>;
+			cache-unified;
+		};
+
+		l2_cache_1: l2-cache-1 {
+			compatible = "cache";
+			cache-level = <2>;
+			cache-unified;
+		};
+	};
+
+	memory@10000000000 {
+		device_type = "memory";
+		reg = <0x100 0x00000000 0x2 0x00000000>;
+	};
+
+	soc {
+		compatible = "simple-bus";
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+		nonposted-mmio;
+
+		cpufreq_e: cpufreq@210e00000 {
+			compatible = "apple,t8140-cluster-cpufreq";
+			reg = <0x2 0x10e00000 0 0x20000>;
+		};
+
+		cpufreq_p: cpufreq@211e00000 {
+			compatible = "apple,t8140-cluster-cpufreq";
+			reg = <0x2 0x11e00000 0 0x20000>;
+		};
+
+		mcc: memory-controller@220000000 {
+			compatible = "apple,t8140-mcc";
+			reg = <0x2 0x20000000 0 0x140000>;
+		};
+
+		aic: interrupt-controller@301000000 {
+			compatible = "apple,t8140-aic3", "apple,t8122-aic3";
+			#interrupt-cells = <3>;
+			interrupt-controller;
+			reg = <0x3 0x01000000 0 0x1cc000>,
+			      <0x3 0x01040000 0 0x4000>;
+			reg-names = "core", "event";
+		};
+
+		dockchannel_uart: serial@308128000 {
+			compatible = "apple,dockchannel-uart";
+			reg = <0x3 0x08128000 0 0x20000>;
+			apple,channel = <0>;
+			current-speed = <115200>;
+		};
+
+		wdt: watchdog@3082b0000 {
+			compatible = "apple,wdt";
+			reg = <0x3 0x082b0000 0 0x4000>;
+		};
+
+		debugusb: usb@348000000 {
+			compatible = "apple,debugusb";
+			reg = <0x3 0x48000000 0 0x10000>;
+		};
+
+		serial0: serial@385200000 {
+			compatible = "apple,s5l-uart";
+			reg = <0x3 0x85200000 0 0x4000>;
+			current-speed = <115200>;
+		};
+
+		sart: sart@38dc50000 {
+			compatible = "apple,t8140-sart";
+			reg = <0x3 0x8dc50000 0 0x10000>;
+		};
+
+		/*
+		 * The split secure BAR, exactly as AppleNANDStorageDxe expects it:
+		 * reg[0] the ASC coprocessor, reg[3] the NVMMU, reg[9] the standard
+		 * NVMe register page. Same shape as T8142.
+		 */
+		ans: nvme@389600000 {
+			compatible = "apple,t8140-nvme-ans", "apple,nvme-ans2";
+			reg = <0x3 0x89600000 0 0x8000>,
+			      <0x3 0x89608000 0 0x8000>,
+			      <0x3 0x8dc00000 0 0x8000>,
+			      <0x3 0x8dcc0000 0 0x8000>,
+			      <0x3 0x8dcc8000 0 0x8000>,
+			      <0x3 0x8dcd0000 0 0x8000>,
+			      <0x3 0x8dcd8000 0 0x8000>,
+			      <0x3 0x8dce0000 0 0x8000>,
+			      <0x3 0x8dce8000 0 0x8000>,
+			      <0x3 0xcdcc0000 0 0x8000>;
+			reg-names = "ans", "mbox", "unk", "nvme", "unk1", "unk2",
+				    "unk3", "unk4", "unk5", "nvme-secure";
+			apple,nvme-secure-bar;
+		};
+	};
+};

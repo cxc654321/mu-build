@@ -1,0 +1,12 @@
+[Defines]
+  DEC_SPECIFICATION              = 0x00010005
+  PACKAGE_NAME                   = MacBookAirFamilyPkg
+  PACKAGE_GUID                   = 19777ab7-6167-4734-a2f7-63143faf0cf8
+  PACKAGE_VERSION                = 1.0
+
+[Includes.common]
+  Include
+
+[Guids.common]
+  gMacBookAirFamilyPkgTokenSpaceGuid = {0x2cedbdbc, 0xeeff, 0x469f, {0xb1, 0xd6, 0x96, 0x20, 0x37, 0xd2, 0x8f, 0x61} }
+

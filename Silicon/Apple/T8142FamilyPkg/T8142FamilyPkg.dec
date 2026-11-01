@@ -1,0 +1,33 @@
+#T8142 (Apple M5) EDK2 Package Description File
+#Copyright (c) 2026 Aurora Silicon
+#SPDX-License-Identifier: BSD-2-Clause-Patent
+[Defines]
+  DEC_SPECIFICATION              = 0x00010005
+  PACKAGE_NAME                   = T8142FamilyPkg
+  PACKAGE_GUID                   = 7215e384-dfe3-4842-a65d-5b8b11989687
+  PACKAGE_VERSION                = 1.0
+
+[Includes.common]
+  Include
+
+[Guids.common]
+  gT8142FamilyPkgTokenSpaceGuid = { 0x74ac804e, 0x77ef, 0x428a, { 0x94, 0xda, 0x1b, 0xb2, 0xf1, 0x3c, 0x12, 0x1f } }
+
+
+[PcdsFixedAtBuild.common]
+
+  #Fallback stack base in case ModuleEntryPoint setup won't work.
+  #gT8142FamilyPkgTokenSpaceGuid.PcdSecPhaseStackBase|0x900000000|UINT64|0x0000440b
+
+[PcdsPatchableInModule.common]
+
+  #
+  # Number of cores. T8142 is 10: 6 E-cores (cluster 0) + 4 P-cores (cluster 1).
+  # Note this is asymmetric, unlike every other SoC currently in this tree.
+  #
+  gT8142FamilyPkgTokenSpaceGuid.PcdCoreCount|10|UINT32|0x00004406
+
+  #
+  # Two clusters: E-core cluster (6 cores) and P-core cluster (4 cores).
+  #
+  gT8142FamilyPkgTokenSpaceGuid.PcdClusterCount|2|UINT32|0x00004407

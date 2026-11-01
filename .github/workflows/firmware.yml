@@ -1,0 +1,56 @@
+name: firmware
+
+# Building firmware needs the submodules, which are large, so this is manual
+# and on release tags rather than on every push.
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      device:
+        description: Device from DEVICES in Platform/Features.py
+        default: j414s
+      without:
+        description: Space-separated features to turn off
+        default: ''
+
+jobs:
+  build:
+    name: Build ${{ github.event.inputs.device || 'j414s' }} firmware
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        # Tools/mu-build refuses anything but an Apple Silicon macOS host: it
+        # uses clang-cl/lld-link from Homebrew LLVM and builds EDK2 BaseTools
+        # natively.
+        run: brew install llvm lld acpica nasm
+
+      - name: Build and seal
+        env:
+          DEVICE: ${{ github.event.inputs.device || 'j414s' }}
+          WITHOUT: ${{ github.event.inputs.without }}
+          # mu-build otherwise writes to a sibling of the checkout, which is
+          # outside the workspace and therefore invisible to upload-artifact.
+          NTASI_MU_OUTPUT_ROOT: ${{ github.workspace }}/build-out
+        run: |
+          set -eu
+          args=""
+          for feature in $WITHOUT; do args="$args --without $feature"; done
+          sh Tools/mu-build "$DEVICE" $args
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mu-firmware-${{ github.event.inputs.device || 'j414s' }}
+          # mu-build seals into <output root>/<config>/<commit>/artifacts.
+          path: |
+            build-out/**/artifacts/*.fd
+            build-out/**/artifacts/manifest.json
+          if-no-files-found: error

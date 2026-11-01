@@ -1,0 +1,69 @@
+# @file
+# stuart settings for the MacBookPro16Early2023 (J416s) platform.
+#
+# What this machine builds is a feature set in Platform/Features.py.
+# Everything else is in Platform/PlatformBuildCommon.py.
+#
+# Copyright (c) Microsoft Corporation.
+# Copyright (c) 2026 Aurora Silicon
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+import logging
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from PlatformBuildCommon import ApplePlatformBuilder, ApplePlatformSettings, stuart_main
+
+from edk2toolext.environment.uefi_build import UefiBuilder
+from edk2toolext.invocables.edk2_platform_build import BuildSettingsManager
+from edk2toolext.invocables.edk2_pr_eval import PrEvalSettingsManager
+from edk2toolext.invocables.edk2_setup import SetupSettingsManager
+from edk2toolext.invocables.edk2_update import UpdateSettingsManager
+
+PLATFORM = "MacBookPro16Early2023"
+DEVICE = "j416s"
+
+
+class SettingsManager(ApplePlatformSettings, UpdateSettingsManager, SetupSettingsManager,
+                      PrEvalSettingsManager):
+    PLATFORM = PLATFORM
+
+
+class PlatformBuilder(ApplePlatformBuilder, UefiBuilder, BuildSettingsManager):
+    PLATFORM = PLATFORM
+    DEVICE = DEVICE
+
+    def __init__(self):
+        UefiBuilder.__init__(self)
+
+    def SetPlatformEnv(self):
+        super().SetPlatformEnv()
+
+        # Experimental Windows 26200 scheduler containment. Keep the normal
+        # heterogeneous MADT efficiency classes unless the build explicitly
+        # asks otherwise.
+        self.env.SetValue(
+            "BLD_*_NTASI_T6020_J416S_HOMOGENEOUS_EFFICIENCY", "0", "Default")
+
+        # WinPE deploy-verdict echo. Off unless the operator asks, and
+        # deliberately not keyed to a profile: it is orthogonal to which devices
+        # the firmware describes, and a boot whose purpose is to attribute a
+        # Windows-side regression must not silently carry an extra ReadyToBoot
+        # participant that opens every FAT volume on the way out of firmware.
+        echo = os.environ.get("NTASI_DEPLOY_EVIDENCE_ECHO", "0").strip()
+        if echo not in ("0", "1"):
+            raise ValueError(
+                "NTASI_DEPLOY_EVIDENCE_ECHO must be 0 or 1, got: " + repr(echo))
+        if echo == "1":
+            logging.info(
+                "NTASI_DEPLOY_EVIDENCE_ECHO=1: this build echoes deploy verdicts")
+        self.env.SetValue(
+            "BLD_*_NTASI_DEPLOY_EVIDENCE_ECHO", echo,
+            "Selected by NTASI_DEPLOY_EVIDENCE_ECHO")
+        return 0
+
+
+if __name__ == "__main__":
+    stuart_main(__file__)

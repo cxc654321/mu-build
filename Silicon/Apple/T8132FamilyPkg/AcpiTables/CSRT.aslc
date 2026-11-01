@@ -1,0 +1,41 @@
+/**
+ * Core System Resource Table for the Apple T8132 family.
+ *
+ * WHY THIS IS EMPTY
+ *
+ * Apple platforms implement two core system resources that are not architected:
+ * the interrupt controller and the IOMMU. The CSRT is how firmware tells
+ * Windows they are there, and it is what Windows' AIC HAL extension binds to.
+ *
+ * It is empty because the AIC payload cannot be derived. The device tree gives
+ * the controller's base address (T8132_AIC_BASE, 0x381000000) and its
+ * compatible string ("apple,t8132-aic3", i.e. AICv3) and stops there. Everything
+ * else the table has to carry -- the IRQ count, the maximum IRQ, the die count,
+ * and the EXTINTRCFG / INTMASKSET / INTMASKCLEAR strides -- is read off the
+ * controller's own CAP0 and MAXNUMIRQ registers and out of the live ADT. Linux
+ * does this at runtime and so does m1n1, which prints the whole geometry in one
+ * line during boot:
+ *
+ *   AIC3 with 1/2 dies, 2400/4096 IRQs, reg_size:40004, config:10000,
+ *   extintrcfg_stride:04a00, intmaskset_stride:04a00, intmaskclear_stride:04a00
+ *
+ * Transcribing that line from a machine in this family, plus the GSIV alias
+ * pairs, is what completes this table. T8132FamilyPkg/AcpiTables/CSRT.aslc is
+ * the worked example and T8132J813Topology.h documents each field.
+ *
+ * The strides in particular must be copied, never recomputed: m1n1 derives a
+ * fallback from the register layout and the ADT then overrides it, and the two
+ * differ by 0x200 per die. That is harmless on a one-die part, which is exactly
+ * what would let the mistake survive review and bite on a two-die one.
+ *
+ * WHAT WORKS WITHOUT IT
+ *
+ * Everything except Windows' interrupt handling. UEFI drives AIC through
+ * AppleAicDxe, which reads the controller directly and already handles v1, v2
+ * and v3 from one code path, so firmware boots and the machine is usable over
+ * serial and framebuffer. T810XFamilyPkg has shipped this same stub since the
+ * beginning.
+ *
+ * Copyright (c) 2026 Aurora Silicon
+ * SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
+ */

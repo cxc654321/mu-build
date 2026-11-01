@@ -1,0 +1,69 @@
+#Memory initialization PEI Library INF description file
+#borrowed from ArmPlatformPkg, original copyright notice below.
+
+#/** @file
+#
+#  Copyright (c) 2011-2014, ARM Ltd. All rights reserved.<BR>
+#  Copyright (c) 2026 Aurora Silicon
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+#**/
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = ArmMemoryInitPeiLib
+  FILE_GUID                      = 416cda7e-1fa8-5262-a48b-6ba2de6f4e2d
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = MemoryInitPeiLib|SEC PEIM
+
+[Sources]
+  MemoryInitPeiLib.c
+
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  ArmPkg/ArmPkg.dec
+  ArmPlatformPkg/ArmPlatformPkg.dec
+  T6002FamilyPkg/T6002FamilyPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+
+[LibraryClasses]
+  DebugLib
+  HobLib
+  ArmMmuLib
+  AppleDTLib
+  PrintLib
+
+[Guids]
+  gEfiMemoryTypeInformationGuid
+
+[FeaturePcd]
+  gEmbeddedTokenSpaceGuid.PcdPrePiProduceMemoryTypeInformationHob
+
+[FixedPcd]
+  gArmTokenSpaceGuid.PcdFdSize
+
+  gAppleSiliconPkgTokenSpaceGuid.PcdSystemMemoryUefiRegionSize
+
+  gEmbeddedTokenSpaceGuid.PcdMemoryTypeEfiACPIReclaimMemory
+  gEmbeddedTokenSpaceGuid.PcdMemoryTypeEfiACPIMemoryNVS
+  gEmbeddedTokenSpaceGuid.PcdMemoryTypeEfiReservedMemoryType
+  gEmbeddedTokenSpaceGuid.PcdMemoryTypeEfiRuntimeServicesData
+  gEmbeddedTokenSpaceGuid.PcdMemoryTypeEfiRuntimeServicesCode
+  gEmbeddedTokenSpaceGuid.PcdMemoryTypeEfiBootServicesCode
+  gEmbeddedTokenSpaceGuid.PcdMemoryTypeEfiBootServicesData
+  gEmbeddedTokenSpaceGuid.PcdMemoryTypeEfiLoaderCode
+  gEmbeddedTokenSpaceGuid.PcdMemoryTypeEfiLoaderData
+
+[Pcd]
+  gArmTokenSpaceGuid.PcdFdBaseAddress
+  gArmTokenSpaceGuid.PcdSystemMemorySize
+  gArmTokenSpaceGuid.PcdSystemMemoryBase
+  gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferAddress
+  gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferSize
+  gAppleSiliconPkgTokenSpaceGuid.PcdCoreCount
+[Depex]
+  TRUE

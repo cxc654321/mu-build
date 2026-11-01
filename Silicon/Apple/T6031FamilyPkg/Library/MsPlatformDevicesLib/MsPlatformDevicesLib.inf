@@ -1,0 +1,36 @@
+## @file
+# Ms Platform Devices Library
+#
+# Copyright (C) Microsoft Corporation. All rights reserved.
+# Copyright (c) 2026 Aurora Silicon
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = MsPlatformDevicesLib
+  FILE_GUID                      = 79362849-c0d1-51b1-9d68-b89bec315bf0
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = MsPlatformDevicesLib|DXE_DRIVER DXE_RUNTIME_DRIVER UEFI_APPLICATION
+
+#
+#  VALID_ARCHITECTURES           = IA32 X64
+#
+
+[Sources]
+ MsPlatformDevicesLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  PcBdsPkg/PcBdsPkg.dec
+  MsCorePkg/MsCorePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+
+[FixedPcd]
+  # Consumed by SerialConsoleDevicePath's UART node, which must match the values
+  # SerialDxe programs into its own device path from these same PCDs.
+  gEfiMdePkgTokenSpaceGuid.PcdUartDefaultBaudRate
+  gEfiMdePkgTokenSpaceGuid.PcdUartDefaultDataBits
+  gEfiMdePkgTokenSpaceGuid.PcdUartDefaultParity
+  gEfiMdePkgTokenSpaceGuid.PcdUartDefaultStopBits

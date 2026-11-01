@@ -1,0 +1,43 @@
+# @file
+# stuart settings for the MacBookAir2026 platform.
+#
+# Everything except the platform name lives in Platform/PlatformBuildCommon.py.
+# When this machine gains a feature set, add it to Platform/Features.py and
+# set DEVICE here.
+#
+# Copyright (c) Microsoft Corporation.
+# Copyright (c) 2026 Aurora Silicon
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from PlatformBuildCommon import ApplePlatformBuilder, ApplePlatformSettings, stuart_main
+
+from edk2toolext.environment.uefi_build import UefiBuilder
+from edk2toolext.invocables.edk2_platform_build import BuildSettingsManager
+from edk2toolext.invocables.edk2_pr_eval import PrEvalSettingsManager
+from edk2toolext.invocables.edk2_setup import SetupSettingsManager
+from edk2toolext.invocables.edk2_update import UpdateSettingsManager
+
+PLATFORM = "MacBookAir2026"
+DEVICE = "j813"
+
+
+class SettingsManager(ApplePlatformSettings, UpdateSettingsManager, SetupSettingsManager,
+                      PrEvalSettingsManager):
+    PLATFORM = PLATFORM
+
+
+class PlatformBuilder(ApplePlatformBuilder, UefiBuilder, BuildSettingsManager):
+    PLATFORM = PLATFORM
+    DEVICE = DEVICE
+
+    def __init__(self):
+        UefiBuilder.__init__(self)
+
+
+if __name__ == "__main__":
+    stuart_main(__file__)

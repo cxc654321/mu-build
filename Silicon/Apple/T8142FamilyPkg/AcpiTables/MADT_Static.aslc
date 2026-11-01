@@ -1,0 +1,200 @@
+/**
+ * Copyright (c) 2026 AppleWOA authors.
+ *
+ * Module Name:
+ *     MADT_Static.aslc
+ *
+ * Abstract:
+ *     Multiple APIC Description Table for the T8142 family (Apple M5).
+ *     This is only a temporary implementation until dynamic allocations in
+ *     AcpiPlatformDxe are implemented.
+ *
+ *     10 cores: 6 E-cores then 4 P-cores. The ACPI processor UIDs here MUST
+ *     match the ones PPTT.aslc assigns (E = 0..5, P = 6..9).
+ *
+ *     Apple silicon has no GIC; the GIC these entries describe is the one m1n1
+ *     emulates for us (see hv_vgic.c), at PcdGicDistributorBase /
+ *     PcdGicRedistributorsBase.
+ *
+ * Environment:
+ *     UEFI firmware/runtime services.
+ *
+ * License:
+ *     Copyright (c) 2026 Aurora Silicon
+ *     SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
+ *
+*/
+
+#include <Library/AcpiLib.h>
+#include <Library/ArmLib.h>
+#include <Library/PcdLib.h>
+#include <IndustryStandard/Acpi63.h>
+#include <Acpi/AcpiHeader.h>
+
+#define ITS_COUNT 1
+
+//
+// pulled from mu_tiano_platforms, since there's no equivalent GICR initializer.
+//
+#define MADT_GICR_INIT()  {                                           \
+   EFI_ACPI_6_4_GICR,                        /* Type */                        \
+   sizeof (EFI_ACPI_6_4_GICR_STRUCTURE),     /* Length */                      \
+   EFI_ACPI_RESERVED_WORD,                   /* Reserved */                    \
+   FixedPcdGet32 (PcdGicRedistributorsBase), /* DiscoveryRangeBaseAddress */   \
+   0x20000 * FixedPcdGet32(PcdCoreCount)     /* DiscoveryRangeLength */        \
+}
+
+#define MADT_GIC_ITS_INIT(GicItsId, GicItsBase)  {                                 \
+    {                                                                              \
+        EFI_ACPI_6_4_GIC_ITS,                 /* Type */                           \
+        sizeof (EFI_ACPI_6_4_GIC_ITS_STRUCTURE),                                   \
+        EFI_ACPI_RESERVED_WORD,               /* Reserved */                       \
+        GicItsId,                             /* GicItsId */                       \
+        GicItsBase,                           /* PhysicalBaseAddress */            \
+        EFI_ACPI_RESERVED_DWORD               /* DiscoveryRangeLength */           \
+    }                                                                              \
+}
+
+//
+// The PMU interrupt (FIQ) indices for T8142 are not known yet. The T8132 device
+// tree expresses them as AIC_CPU_PMU_E / AIC_CPU_PMU_P fiq-index affinities
+// rather than plain numbers, and we have not read them off J704 hardware.
+//
+// 0 means "no PMU interrupt", which is the honest representation. Do not copy
+// the values from T810XFamilyPkg -- those are for a different SoC (and contain
+// duplicates that look like typos). Fill this in once m1n1 can dump the AIC
+// affinity nodes.
+//
+#define T8142_PMU_IRQ_UNKNOWN 0
+
+#pragma pack (1)
+
+typedef struct {
+EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_HEADER   Header;
+EFI_ACPI_6_3_GIC_STRUCTURE                            GicInterfaces[FixedPcdGet32 (PcdCoreCount)];
+EFI_ACPI_6_0_GIC_DISTRIBUTOR_STRUCTURE                GicDistributor;
+EFI_ACPI_6_4_GICR_STRUCTURE                           GicRedistributor;
+//
+// No GIC ITS entry.  The distributor and redistributor above are emulated by
+// m1n1 (hv_vgic.c); the ITS is not -- its MMIO hook is compiled out whenever
+// the native-AIC bridge is in use, which is every configuration this platform
+// ships.  Advertising one anyway is not a harmless overstatement: Windows
+// initializes every ITS the MADT lists, and the first register read lands on an
+// address with no stage-2 mapping, which ends the boot outright.
+//
+// Describing no ITS is also the accurate description of the machine.  Apple
+// silicon has no GIC at all, MSIs are not translated anywhere, and every
+// peripherals interrupt -- PCIe included -- arrives through AIC and is bridged
+// as a wired interrupt.  With no ITS advertised Windows uses those directly.
+//
+} MULTIPLE_APIC_DESCRIPTION_TABLE;
+
+#pragma pack ()
+
+MULTIPLE_APIC_DESCRIPTION_TABLE Madt = {
+{
+    __ACPI_HEADER (
+    EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_SIGNATURE,
+    MULTIPLE_APIC_DESCRIPTION_TABLE,
+    EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_REVISION
+    ),
+    //
+    // MADT specific fields
+    //
+    0, // LocalApicAddress
+    0, // Flags
+},
+{
+    // Format: EFI_ACPI_6_3_GICC_STRUCTURE_INIT(GicId, AcpiCpuUid, Mpidr, Flags, PmuIrq,
+    //                                          GicBase, GicVBase, GicHBase, GsivId, GicRBase,
+    //                                          Efficiency, SpeOvflIrq)
+    // (verified against Common/TIANO/EmbeddedPkg/Include/Library/AcpiLib.h:69 --
+    //  note the argument-order comment in the other SoC packages is stale.)
+    //
+    // Note: The GIC Structure of the primary CPU must be the first entry (see note in 5.2.12.14
+    //       GICC Structure of ACPI v5.1).
+    //
+    // That primary CPU is a P-core on this machine, not cpu0.  m1n1 reports
+    // "CPU init (MIDR: 0x612f0630 smp_id:0x6) / CPU: M5 Hidra (P core)" and every
+    // guest exception it prints is tagged [cpu6], so firmware and Windows both
+    // run on ADT cpu6 -- GET_MPIDR(0, 1, 1, 0), the entry below with UID 6.
+    // Listing E-core 0 first described a processor the OS was not running on,
+    // and it is also the one core that currently fails to start, so the entry
+    // named as primary was the least suitable one in the table.
+    //
+    // Only the order changes.  UIDs stay bound to their own entries so the
+    // correspondence with PPTT and the DSDT _UID values is untouched.
+    //
+    // MPIDR values follow the T8132 (M4) device tree, which J704 matches: E-cores are
+    // cpu@0..cpu@5 (Aff2=0, Aff1=0, Aff0=0..5) and P-cores are cpu@10100..cpu@10103
+    // (Aff2=1, Aff1=1, Aff0=0..3). See docs/T8132-VS-T8142.md.
+    //
+    // Efficiency is set to 1 for E-cores and 0 for P-cores so the OS can tell the
+    // asymmetric clusters apart (lower value == higher performance).
+    //
+
+    // ---- Bootstrap CPU: must be first (see note above) ----
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // P-core 0 == ADT cpu6, the core firmware runs on
+        6, 6, GET_MPIDR(0, 1, 1, 0), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
+        0, 0, 25, 0 /* GicRBase */, 0, 0),
+
+    // ---- Cluster 0: 6 E-cores ("sawtooth") ----
+    //
+    // E-core 0 was temporarily described as present-but-not-enabled while m1n1
+    // could not start it.  That is fixed and the entry is enabled again.
+    //
+    // Kept as a note because the failure mode is worth knowing: Windows issues
+    // PSCI CPU_ON for MPIDR 0 first, and a truthful failure is not degraded
+    // gracefully -- it answers with PSCI SYSTEM_RESET and the boot ends
+    // (measured).  So this flag must only be set while cpu0 genuinely starts.
+    //
+    // It does.  cpu0 was never defective; the RAM-chainload handover destroyed
+    // it before the loaded image ran an instruction, and a directly booted
+    // m1n1 brings up all ten cores (10/10 running, cpu0 with its spin-table
+    // flag set).  See the cpu0 note in m1n1's src/smp.c.  Note that this means
+    // a chainloaded m1n1 will still fail CPU_ON for cpu0 and reset the machine
+    // with this flag set -- Windows must be booted from an installed image.
+    //
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // E-core 0
+        0, 0, GET_MPIDR(0, 0, 0, 0), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
+        0, 0, 25, 0 /* GicRBase */, 1, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // E-core 1
+        1, 1, GET_MPIDR(0, 0, 0, 1), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
+        0, 0, 25, 0 /* GicRBase */, 1, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // E-core 2
+        2, 2, GET_MPIDR(0, 0, 0, 2), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
+        0, 0, 25, 0 /* GicRBase */, 1, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // E-core 3
+        3, 3, GET_MPIDR(0, 0, 0, 3), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
+        0, 0, 25, 0 /* GicRBase */, 1, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // E-core 4
+        4, 4, GET_MPIDR(0, 0, 0, 4), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
+        0, 0, 25, 0 /* GicRBase */, 1, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // E-core 5
+        5, 5, GET_MPIDR(0, 0, 0, 5), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
+        0, 0, 25, 0 /* GicRBase */, 1, 0),
+
+    // ---- Cluster 1: 4 P-cores ("everest") ----
+    // P-core 0 is not repeated here; it is the bootstrap entry at the top of the
+    // list, where 5.2.12.14 requires it.
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // P-core 1
+        7, 7, GET_MPIDR(0, 1, 1, 1), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
+        0, 0, 25, 0 /* GicRBase */, 0, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // P-core 2
+        8, 8, GET_MPIDR(0, 1, 1, 2), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
+        0, 0, 25, 0 /* GicRBase */, 0, 0),
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // P-core 3
+        9, 9, GET_MPIDR(0, 1, 1, 3), EFI_ACPI_6_3_GIC_ENABLED, T8142_PMU_IRQ_UNKNOWN, 0,
+        0, 0, 25, 0 /* GicRBase */, 0, 0),
+},
+EFI_ACPI_6_0_GIC_DISTRIBUTOR_INIT(0, FixedPcdGet64 (PcdGicDistributorBase), 0, 3),
+// Format: EFI_ACPI_6_3_GIC_MSI_FRAME_INIT(GicMsiFrameId, PhysicalBaseAddress, Flags, SPICount, SPIBase)
+
+MADT_GICR_INIT()
+};
+
+//
+// Reference the table being generated to prevent the optimizer from removing the
+// data structure from the executable
+//
+VOID* CONST ReferenceAcpiTable = &Madt;

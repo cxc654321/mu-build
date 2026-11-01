@@ -1,0 +1,85 @@
+## M1 SEC Phase INF description file
+## Copyright (c) 2026 Aurora Silicon
+## SPDX-License-Identifier: BSD-2-Clause-Patent
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = Sec
+  FILE_GUID                      = fa8e7979-a845-4378-b7f8-ceede175b1e9
+  MODULE_TYPE                    = SEC
+  VERSION_STRING                 = 1.0
+
+
+[Sources.common]
+  AdtParser.c
+  PrePi.c
+
+#Comment/uncomment either line out if you want SEC phase to be relocatable or not relocatable
+#mutually exclusive (one or the other, not both)
+[Sources.AARCH64]
+  AArch64/ModuleEntryPoint.S | GCC
+  #AArch64/ModuleEntryPoint_NoRelocation.S | GCC
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  ArmPkg/ArmPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+
+[LibraryClasses]
+  ArmLib
+  ArmMmuLib
+  BaseLib
+  DebugLib
+  IoLib
+  AppleDTLib
+  ExtractGuidedSectionLib
+  LzmaDecompressLib
+  PeCoffGetEntryPointLib
+  PrePiHobListPointerLib
+  CacheMaintenanceLib
+  #DebugAgentLib
+  SerialPortLib
+  MemoryAllocationLib
+  PerformanceLib
+  PeCoffLib
+  HobLib
+  CompilerIntrinsicsLib
+  # These pertain to HOB setup
+  MemoryInitPeiLib
+  PlatformPeiLib
+
+[Guids]
+  gAppleSiliconPkgFdInfoHobGuid   ## PRODUCES ## HOB
+  gEfiSystemNvDataFvGuid
+  gEfiVariableGuid
+
+[Pcd]
+
+
+[PatchPcd]
+  #System RAM
+  gArmTokenSpaceGuid.PcdSystemMemoryBase
+  gArmTokenSpaceGuid.PcdSystemMemorySize
+  gArmTokenSpaceGuid.PcdFvBaseAddress
+  gArmTokenSpaceGuid.PcdFdBaseAddress
+  gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferAddress
+  gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferSize
+
+[FixedPcd]
+  #CPU exception vectors
+  #gArmTokenSpaceGuid.PcdCpuVectorBaseAddress
+
+  #FV settings
+  gArmTokenSpaceGuid.PcdFvSize
+  #FD (aka actual image) settings
+  gArmTokenSpaceGuid.PcdFdSize
+
+  gAppleSiliconPkgTokenSpaceGuid.PcdSystemMemoryUefiRegionSize
+  gEmbeddedTokenSpaceGuid.PcdPrePiCpuIoSize
+  gAppleSiliconPkgTokenSpaceGuid.PcdSecPhaseStackBase
+  gAppleSiliconPkgTokenSpaceGuid.PcdSecPhaseStackSize
+
+  gAppleSiliconPkgTokenSpaceGuid.PcdAdtPointer
+  gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer

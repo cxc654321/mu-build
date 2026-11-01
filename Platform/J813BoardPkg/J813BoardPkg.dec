@@ -1,0 +1,23 @@
+## @file
+#  J813BoardPkg -- ACPI describing the logic board of the MacBook Air (M5, 2026).
+#
+#  Named for the machine it was measured on, because that is what makes its
+#  provenance true. Other machines share it when they share the board; see
+#  Readme.md.
+#
+#  Copyright (c) 2026 Aurora Silicon
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  DEC_SPECIFICATION              = 0x00010005
+  PACKAGE_NAME                   = J813BoardPkg
+  PACKAGE_GUID                   = c0fee07e-86c9-5d2b-ab8e-edc611e7ecfe
+  PACKAGE_VERSION                = 1.0
+
+[Includes.common]
+  Include
+
+[Guids.common]
+  gJ813BoardPkgTokenSpaceGuid = { 0x4758bdab, 0x552e, 0x5bf6, { 0xb5, 0x7c, 0x93, 0xac, 0xf6, 0xd9, 0xef, 0x8d } }
+

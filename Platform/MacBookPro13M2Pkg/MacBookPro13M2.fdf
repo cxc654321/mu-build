@@ -1,0 +1,280 @@
+#UEFI Flash Description File for MacBook Pro, 2023 M2 Pro ("Rhodes") model
+## @file
+#
+#  Copyright (c) 2018, Linaro Limited. All rights reserved.
+#
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+##
+
+
+################################################################################
+#
+# FD Section
+# The [FD] Section is made up of the definition statements and a
+# description of what goes into  the Flash Device Image.  Each FD section
+# defines one flash "device" image.  A flash device image may be one of
+# the following: Removable media bootable image (like a boot floppy
+# image,) an Option ROM image (that would be "flashed" into an add-in
+# card,) a System "Flash"  image (that would be burned into a system's
+# flash) or an Update ("Capsule") image that will be used to update and
+# existing system flash.
+#
+################################################################################
+
+
+[FD.MacBookPro13M2_EFI]
+BaseAddress   = 0x10030000000|gArmTokenSpaceGuid.PcdFdBaseAddress  # Desired address of firmware (will always be loaded from RAM)
+Size          = 0x00001E00000|gArmTokenSpaceGuid.PcdFdSize         # The size in bytes
+ErasePolarity = 1
+BlockSize     = 0x4000
+NumBlocks     = 0x780
+
+################################################################################
+#
+# Following are lists of FD Region layout which correspond to the locations of different
+# images within the flash device.
+#
+# Regions must be defined in ascending order and may not overlap.
+#
+# A Layout Region start with a eight digit hex offset (leading "0x" required) followed by
+# the pipe "|" character, followed by the size of the region, also in hex with the leading
+# "0x" characters. Like:
+# Offset|Size
+# PcdOffsetCName|PcdSizeCName
+# RegionType <FV, DATA, or FILE>
+#
+################################################################################
+
+# from ArmVirtPkg/ArmVirtQemuKernel.fdf
+#
+# Implement the Linux kernel header layout so that the loader (m1n1) will identify
+# it as something bootable, and execute it with a FDT pointer in x0 or r2.
+0x000000000|0x000008000
+DATA = {
+  0x01, 0x00, 0x00, 0x10,                         # code0: adr x1, .
+  0xff, 0x1f, 0x00, 0x14,                         # code1: b 0x8000
+  0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, # text_offset: 512 KB
+  0x00, 0x00, 0x0e, 0x10, 0x00, 0x00, 0x00, 0x00, # image_size: 30 MB
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # flags
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # res2
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # res3
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # res4
+  0x41, 0x52, 0x4d, 0x64,                         # magic: "ARM\x64"
+  0x00, 0x00, 0x00, 0x00                          # res5
+}
+
+0x000008000|0x001D80000
+gArmTokenSpaceGuid.PcdFvBaseAddress|gArmTokenSpaceGuid.PcdFvSize
+FV = FVMAIN_COMPACT
+
+
+################################################################################
+#
+# FV Section
+#
+# [FV] section is used to define what components or modules are placed within a flash
+# device file.  This section also defines order the components and modules are positioned
+# within the image.  The [FV] section consists of define statements, set statements and
+# module statements.
+#
+################################################################################
+
+[FV.FvMain]
+BlockSize          = 0x40
+FvAlignment        = 16         # FV alignment and FV attributes setting.
+ERASE_POLARITY     = 1
+MEMORY_MAPPED      = TRUE
+STICKY_WRITE       = TRUE
+LOCK_CAP           = TRUE
+LOCK_STATUS        = TRUE
+WRITE_DISABLED_CAP = TRUE
+WRITE_ENABLED_CAP  = TRUE
+WRITE_STATUS       = TRUE
+WRITE_LOCK_CAP     = TRUE
+WRITE_LOCK_STATUS  = TRUE
+READ_DISABLED_CAP  = TRUE
+READ_ENABLED_CAP   = TRUE
+READ_STATUS        = TRUE
+READ_LOCK_CAP      = TRUE
+READ_LOCK_STATUS   = TRUE
+FvNameGuid         = 02e6c12f-69f7-4626-b5de-e3cfd6c0dc56
+
+  !include AppleSiliconPkg/Include/DXEApriori.fdf.inc
+
+  #
+  # Which of the shared module list this machine takes.
+  # See AppleSiliconPkg/AppleSiliconFvMain.fdf.inc.
+  #
+  DEFINE PLATFORM_PKG = MacBookPro13M2Pkg
+  DEFINE PLATFORM_BOARD_PKG = GenericBoardPkg
+  DEFINE PLATFORM_FAMILY_PKG = MacBookProFamilyPkg
+  DEFINE PLATFORM_SOC_PKG = T811XFamilyPkg
+  DEFINE PLATFORM_NAND_SLOT = LATE
+  DEFINE PLATFORM_ENABLE_DART = TRUE
+  DEFINE PLATFORM_ENABLE_PCI = TRUE
+  DEFINE PLATFORM_ENABLE_APPLE_PCI = FALSE
+  DEFINE PLATFORM_ENABLE_GPIO = TRUE
+  DEFINE PLATFORM_ENABLE_TYPEC = TRUE
+  DEFINE PLATFORM_ENABLE_MTP_HID = FALSE
+  DEFINE PLATFORM_ENABLE_SERIAL_DXE = FALSE
+  DEFINE PLATFORM_ENABLE_COLORBARS = FALSE
+  DEFINE PLATFORM_ENABLE_GENERIC_ACPI = TRUE
+
+  !include AppleSiliconPkg/AppleSiliconFvMain.fdf.inc
+  
+   #Main DXE core
+
+  #
+  # PI DXE Drivers producing Architectural Protocols (EFI Services)
+  #
+
+
+  #
+  # Multiple Console IO support
+  #
+!if $(AIC_BUILD) == FALSE
+!else 
+!endif
+
+  #
+  # PCIe Support (required to bring up USB-A among other fun stuff)
+  #
+
+  #NVMe Support
+  #INF MdeModulePkg/Bus/Pci/NvmExpressDxe/NvmExpressDxe.inf
+
+  #
+  # Virtual Keyboard
+  #
+  #INF OemPkg/FrontpageButtonsVolumeUp/FrontpageButtonsVolumeUp.inf
+
+  # FV FileSystem
+
+  #
+  # PCIe support is disabled for now.
+  #
+  #INF AppleSiliconPkg/Drivers/AppleSiliconPciPlatformDxe/AppleSiliconPciPlatformDxe.inf
+  #INF AppleSiliconPkg/Drivers/AppleBootTimeEmbeddedFirmwareHelperDxe/AppleBootTimeEmbeddedFirmwareHelperDxe.inf
+
+  #
+  # DWC3 bringup module.
+  #
+
+  #
+  # Usb Support
+  #
+  #
+  # USB Host Support
+  #
+
+  #
+  # USB Mass Storage Support
+  #
+  #
+  # Some miscellaneous Mu modules
+  #
+
+  #
+  # FAT filesystem + GPT/MBR partitioning
+  #
+
+  #
+  # ACPI Support
+  #
+  # DRT0 (wireless DART SID-1 handoff) is no longer a static compiled ASL
+  # table: the reservation base/size are derived at boot (see
+  # MemoryInitPeiLib.c), not known at build time, so AcpiPlatformDxe
+  # generates DRT0's SSDT dynamically instead, the same way it already
+  # does for NTAS2003's PMGR resources. See NtasiInstallWirelessDartTable()
+  # in AcpiPlatform.c.
+  # NTAS0023 (GPU) has NO static ACPI table. GPU.asl/GpuAcpiTables.inf were
+  # deleted on 2026-07-30: their FFS GUID was never one of the four
+  # Pcd*AcpiTableStorageFile GUIDs AcpiPlatformDxe reads, so the table was
+  # compiled into every gpu-build FV and never installed -- while its _CRS
+  # hardcoded hw_data_a at [0x103db294000, 0x103db29c000), a range inside OS
+  # RAM that contains the exact SP_EL1 (0x103db29ba10) which crashed Mu's PEI
+  # twice. Not publishing NTAS0023 is now a decision, not an accident; see
+  # NtasiResolveAndReserveGpuCarveouts() in AcpiPlatform.c for the exact
+  # condition under which it will be published.
+  #
+  # SMBIOS Support
+  #
+
+  #NVMe Support
+!if $(NTASI_ENABLE_ANS) == TRUE
+  # Deliberately dispatched late (after PCI/USB/FAT/ACPI/SMBIOS, not
+  # alongside the rest of "PCIe Support" above): on 2026-07-30 a hang in
+  # this driver produced zero console output, indistinguishable from a
+  # driver that never started at all. Everything above it -- including
+  # console-capable drivers, ACPI table installation (with its own
+  # DEBUG_ERROR-heavy AcpiPlatformDxe), and SMBIOS -- gets a chance to run
+  # and to have emitted its own diagnostics first, so a future hang here is
+  # bounded to a much smaller window of "what ran since the last visible
+  # log line" than tonight's whole-boot ambiguity. See AppleNANDStorageDxe.c
+  # for the named-stage breadcrumbs this driver now logs at every step.
+!endif
+
+  #
+  # UEFI applications
+  #
+
+  #
+  # Bds
+  #
+  # ColorbarsDxe is deliberately NOT packaged on J493s.  All it did was
+  # AddDeviceState() six development-state bits, which ColorBarDisplayDeviceStateLib
+  # then painted as six coloured bars over the boot logo on every single boot.
+  # That library is now the Null instance (FrontpageDsc.inc), so this driver
+  # would be a pure no-op; dropping it removes the flag-setting half too.
+  # The other platform FDFs still reference it and still build -- the DSC
+  # component entry is intentionally left in place for them.
+
+  # DT
+  #INF EmbeddedPkg/Drivers/DtPlatformDxe/DtPlatformDxe.inf
+
+  FILE FREEFORM = PCD(gMsCorePkgTokenSpaceGuid.PcdRegulatoryGraphicFileGuid) {
+    SECTION RAW = MacBookAirMid2020Pkg/Resources/RegulatoryLogos.png
+  }
+
+  # Embedded RAMDisk (ISO format)
+  #FILE FREEFORM = 650B7CD0-94F8-46CC-88DE-8C199D41EDA3 {
+  #SECTION RAW = AppleSiliconPkg/RAMDisk/WinPE.iso
+  #SECTION UI = "Embedded RAMDisk"  
+#}
+
+  # Embedded RAMDisk (IMG format)
+  #FILE FREEFORM = 650B7CD0-94F8-46CC-88DE-8C199D41EDA3 {
+  #SECTION RAW = AppleSiliconPkg/RAMDisk/WinPE.img
+  #SECTION UI = "Embedded RAMDisk"  
+#}
+  
+!include AppleSiliconPkg/FrontpageFdf.inc
+
+[FV.FVMAIN_COMPACT]
+FvAlignment        = 8
+ERASE_POLARITY     = 1
+MEMORY_MAPPED      = TRUE
+STICKY_WRITE       = TRUE
+LOCK_CAP           = TRUE
+LOCK_STATUS        = TRUE
+WRITE_DISABLED_CAP = TRUE
+WRITE_ENABLED_CAP  = TRUE
+WRITE_STATUS       = TRUE
+WRITE_LOCK_CAP     = TRUE
+WRITE_LOCK_STATUS  = TRUE
+READ_DISABLED_CAP  = TRUE
+READ_ENABLED_CAP   = TRUE
+READ_STATUS        = TRUE
+READ_LOCK_CAP      = TRUE
+READ_LOCK_STATUS   = TRUE
+
+  INF RuleOverride = SELF_RELOC AppleSiliconPkg/PrePi/PrePi.inf
+
+  FILE FV_IMAGE = 9E21FD93-9C72-4c15-8C4B-E77F1DB2D792 {
+    SECTION GUIDED EE4E5898-3914-4259-9D6E-DC7BD79403CF PROCESSING_REQUIRED = TRUE {
+      SECTION FV_IMAGE = FVMAIN
+    }
+  }
+
+!include AppleSiliconPkg/AppleSiliconFdfRules.fdf.inc

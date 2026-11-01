@@ -1,0 +1,386 @@
+#UEFI Flash Description File for Mac Studio platforms
+#based on OnePlus6TPkg/OnePlus6TPkg.fdf
+#
+#  Copyright (c) 2018, Linaro Limited. All rights reserved.
+#
+#  This program and the accompanying materials
+#  are licensed and made available under the terms and conditions of the BSD License
+#  which accompanies this distribution.  The full text of the license may be found at
+#  http://opensource.org/licenses/bsd-license.php
+#
+#  THE PROGRAM IS DISTRIBUTED UNDER THE BSD LICENSE ON AN "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
+#
+
+################################################################################
+#
+# FD Section
+# The [FD] Section is made up of the definition statements and a
+# description of what goes into  the Flash Device Image.  Each FD section
+# defines one flash "device" image.  A flash device image may be one of
+# the following: Removable media bootable image (like a boot floppy
+# image,) an Option ROM image (that would be "flashed" into an add-in
+# card,) a System "Flash"  image (that would be burned into a system's
+# flash) or an Update ("Capsule") image that will be used to update and
+# existing system flash.
+#
+################################################################################
+
+[FD.J413MacBookAir13M2_EFI]
+BaseAddress   = 0x830000000|gArmTokenSpaceGuid.PcdFdBaseAddress  # Desired address of firmware (will always be loaded from RAM)
+Size          = 0x00001E00000|gArmTokenSpaceGuid.PcdFdSize         # The size in bytes
+ErasePolarity = 1
+
+
+BlockSize     = 0x4000
+NumBlocks     = 0x780
+
+################################################################################
+#
+# Following are lists of FD Region layout which correspond to the locations of different
+# images within the flash device.
+#
+# Regions must be defined in ascending order and may not overlap.
+#
+# A Layout Region start with a eight digit hex offset (leading "0x" required) followed by
+# the pipe "|" character, followed by the size of the region, also in hex with the leading
+# "0x" characters. Like:
+# Offset|Size
+# PcdOffsetCName|PcdSizeCName
+# RegionType <FV, DATA, or FILE>
+#
+################################################################################
+
+# from ArmVirtPkg/ArmVirtQemuKernel.fdf
+#
+# Implement the Linux kernel header layout so that the loader (m1n1) will identify
+# it as something bootable, and execute it with a FDT pointer in x0 or r2.
+0x000000000|0x000000100
+DATA = {
+  0x01, 0x00, 0x00, 0x10,                         # code0: adr x1, .
+  0xff, 0x1f, 0x00, 0x14,                         # code1: b 0x8000
+  0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, # text_offset: 512 KB
+  0x00, 0x00, 0x0e, 0x10, 0x00, 0x00, 0x00, 0x00, # image_size: 30 MB
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # flags
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # res2
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # res3
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # res4
+  0x41, 0x52, 0x4d, 0x64,                         # magic: "ARM\x64"
+  0x00, 0x00, 0x00, 0x00                          # res5
+}
+
+# Host-visible ANS stage record outside the compressed FV.  No EL2 code writes
+# this location; AppleNANDStorageDxe replaces the SANCHECK word from EL1.
+0x000000100|0x000000010
+DATA = {
+  0x41, 0x55, 0x52, 0x41, 0x4e, 0x53, 0x4e, 0x56, # "AURANSNV"
+  0x53, 0x41, 0x4e, 0x43, 0x48, 0x45, 0x43, 0x4b  # "SANCHECK"
+}
+
+
+0x000008000|0x001D80000
+gArmTokenSpaceGuid.PcdFvBaseAddress|gArmTokenSpaceGuid.PcdFvSize
+FV = FVMAIN_COMPACT
+
+
+################################################################################
+#
+# FV Section
+#
+# [FV] section is used to define what components or modules are placed within a flash
+# device file.  This section also defines order the components and modules are positioned
+# within the image.  The [FV] section consists of define statements, set statements and
+# module statements.
+#
+################################################################################
+
+[FV.FvMain]
+BlockSize          = 0x40
+FvAlignment        = 16         # FV alignment and FV attributes setting.
+ERASE_POLARITY     = 1
+MEMORY_MAPPED      = TRUE
+STICKY_WRITE       = TRUE
+LOCK_CAP           = TRUE
+LOCK_STATUS        = TRUE
+WRITE_DISABLED_CAP = TRUE
+WRITE_ENABLED_CAP  = TRUE
+WRITE_STATUS       = TRUE
+WRITE_LOCK_CAP     = TRUE
+WRITE_LOCK_STATUS  = TRUE
+READ_DISABLED_CAP  = TRUE
+READ_ENABLED_CAP   = TRUE
+READ_STATUS        = TRUE
+READ_LOCK_CAP      = TRUE
+READ_LOCK_STATUS   = TRUE
+FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
+
+  !include AppleSiliconPkg/Include/DXEApriori.fdf.inc
+
+  #
+  # Which of the shared module list this machine takes.
+  # See AppleSiliconPkg/AppleSiliconFvMain.fdf.inc.
+  #
+  DEFINE PLATFORM_PKG = MacBookAir13M2Pkg
+  DEFINE PLATFORM_BOARD_PKG = GenericBoardPkg
+  DEFINE PLATFORM_FAMILY_PKG = MacBookAirFamilyPkg
+  DEFINE PLATFORM_SOC_PKG = T811XFamilyPkg
+  DEFINE PLATFORM_NAND_SLOT = LATE
+  DEFINE PLATFORM_ENABLE_DART = TRUE
+  DEFINE PLATFORM_ENABLE_PCI = FALSE
+  DEFINE PLATFORM_ENABLE_APPLE_PCI = FALSE
+  DEFINE PLATFORM_ENABLE_GPIO = TRUE
+  DEFINE PLATFORM_ENABLE_TYPEC = TRUE
+  DEFINE PLATFORM_ENABLE_MTP_HID = BUILD_FLAG
+  DEFINE PLATFORM_ENABLE_SERIAL_DXE = TRUE
+  DEFINE PLATFORM_ENABLE_COLORBARS = TRUE
+  DEFINE PLATFORM_ENABLE_GENERIC_ACPI = TRUE
+
+  !include AppleSiliconPkg/AppleSiliconFvMain.fdf.inc
+
+  #Main DXE core
+
+  #
+  # PI DXE Drivers producing Architectural Protocols (EFI Services)
+  #
+
+
+  #
+  # Multiple Console IO support
+  #
+  #
+  # Produces EFI_SERIAL_IO_PROTOCOL on top of SerialPortLib (which is
+  # AppleUartSerialPortLib here), giving TerminalDxe something to bind to. Without
+  # it TerminalDxe was inert and the platform had no console INPUT at all.
+  #
+  # Already present in AppleSiliconPkg.dsc.inc's [Components] and already being
+  # built -- it was simply never placed in the FV.
+  #
+!if $(AIC_BUILD) == FALSE
+!else
+!endif
+
+  #
+  # PCIe Support (required to bring up USB-A among other fun stuff)
+  #
+  #INF ArmPkg/Drivers/ArmPciCpuIo2Dxe/ArmPciCpuIo2Dxe.inf
+  #INF MdeModulePkg/Bus/Pci/PciHostBridgeDxe/PciHostBridgeDxe.inf
+  #INF MdeModulePkg/Bus/Pci/PciBusDxe/PciBusDxe.inf
+
+  # Internal Apple ANS/NVMe is dispatched late below, after ACPI and the
+  # filesystem stack are present. It is not a PCIe/NvmExpressDxe device.
+
+  #
+  # Virtual Keyboard
+  #
+  #INF OemPkg/FrontpageButtonsVolumeUp/FrontpageButtonsVolumeUp.inf
+
+  # FV FileSystem
+
+  #
+  # PCIe support is disabled for now.
+  #
+  # ...and now it really is. The comment above was already here while the driver
+  # was still being built into the FV, which is what actually killed DXE dispatch
+  # on J413:
+  #
+  #   AppleSiliconPciPlatformDxeInitialize - PCIe RC base: 0x48C000000
+  #   ... device PHY base address is 0x48C084000
+  #   [SError] FAR = 0x48C084004, L2C_ERR_ADR = 0x30050048C084004
+  #
+  # The APCIE block is unpowered, so the PHY does not answer and the fabric
+  # raises an asynchronous abort. It cannot be powered from m1n1 either:
+  # pcie_init() rejects T8142 ("Unsupported compatible"), and
+  # pmgr_adt_clocks_enable("/arm-io/apcie") times out with the power-state
+  # register stuck at actual=0 / target=0xf, i.e. something outside PMGR (a
+  # parent domain, refclk, or PMU/SMC step) is missing.
+  #
+  # PciHostBridgeDxe, PciBusDxe and NvmExpressDxe are already commented out
+  # above, so nothing else in this build depends on this driver. Re-enable it
+  # together with them once APCIE power-up is understood -- it is required for
+  # NVMe, and therefore for booting Windows from internal storage.
+  #
+  #INF AppleSiliconPkg/Drivers/AppleSiliconPciPlatformDxe/AppleSiliconPciPlatformDxe.inf
+  #INF AppleSiliconPkg/Drivers/AppleBootTimeEmbeddedFirmwareHelperDxe/AppleBootTimeEmbeddedFirmwareHelperDxe.inf
+
+  #
+  # DWC3 bringup module.
+  #
+  # TEMPORARILY DISABLED on J413 to unblock the boot menu.
+  #
+  # This driver is the only thing that calls
+  # RegisterNonDiscoverableMmioDevice(NonDiscoverableDeviceTypeXhci, ...), so
+  # without it XhciDxe/UsbBusDxe never bind to anything and the USB stack below
+  # stays inert (harmless, just unused).
+  #
+  # Why: USB enumeration hangs the whole boot chain before BDS can reach the boot
+  # menu. The hang is NOT the DART/DMA issue that was first suspected -- a build
+  # with the node-presence DART fix configured dart-usb0 and dart-usb3 in bypass
+  # mode and still stopped at exactly the same instruction. The xHCI itself is
+  # healthy in that log: XhcResetHC succeeded, DCBAA and the CMD/EVENT rings were
+  # created, XhcGetCapability reported 2 ports. Output then stops between
+  # UsbRootHubInit's DEBUG_INFO print and the first DEBUG_INFO in
+  # UsbEnumeratePort, so it dies inside HubApi->GetPortStatus -- i.e. the xHCI
+  # PORTSC read, which does no DMA. Root cause still unknown; a likely suspect is
+  # the pipehandler mux, which m1n1's usb_phy_bringup() leaves at
+  # PIPEHANDLER_MUX_CTRL_DUMMY (correct for its own device-mode gadget, possibly
+  # wrong for host mode).
+  #
+  # The serial console is fully up before any of this happens (ConIn/ConOut are
+  # set and TerminalDxe reports its modes), so disabling USB gives a boot menu and
+  # UEFI Shell navigable over the VUART. Cost: no USB keyboard and no USB boot
+  # media, so this configuration cannot yet boot an OS from a USB stick -- it is
+  # for getting the menu and an interactive Shell working, and for debugging the
+  # port hang from that Shell.
+  #
+  # Re-enable by uncommenting once the PORTSC hang is understood.
+  #
+  # RE-ENABLED: the driver now calls Dwc3UnparkPipePhy() before DWC3 core init,
+  # which is the candidate fix for the hang described above. If that turns out to
+  # be wrong, either set APPLE_DWC3_UNPARK_PIPE_PHY to 0 in
+  # AppleUsbTypeCBringupDxe.c, or comment this INF out again to get back to a
+  # bootable menu with USB disabled entirely.
+  #
+  # UPDATE (attempt 30): the un-park WAS wrong, and APPLE_DWC3_UNPARK_PIPE_PHY is
+  # now 0 -- CLK_SELECT would not latch USB3_PHY with the ATC PHY unbrought-up, so
+  # the xHCI lost its pipe clock and CNR never cleared. This INF stays enabled: the
+  # driver is still what registers the xHCI, and the stall is now addressed from
+  # the other end instead, by keeping the USB keyboard path out of ConIn
+  # (PcdAppleConnectUsbKeyboardConsole|FALSE in MacBookAir13M2.dsc) so the
+  # console no longer drags the USB stack in at ReadyToBoot.
+  #
+
+  #
+  # Internal keyboard (MTP over dockchannel) -- stage 1 survey, attempt 37.
+  #
+  # Read-only: reads the live ADT topology, reports whether the MTP coprocessor
+  # is already running, and watches the dockchannel RX FIFO for ~8s while you
+  # type on the built-in keyboard. That measurement decides whether stage 2 is a
+  # small FIFO reader or a full RTKit/SMC/DART port.
+  #
+  # It touches MMIO on a block nothing has powered up in UEFI before, so it
+  # carries a real hang risk. Comment it out to get back to a build that is only
+  # startup.nsh.
+  #
+
+  #
+  # Usb Support
+  #
+  #
+  # USB Host Support
+  #
+
+  #
+  # USB Mass Storage Support
+  #
+  #
+  # Some miscellaneous Mu modules
+  #
+
+  # T8142 PMUv3 compatibility is provided by m1n1 EL2.  Do not embed the
+  # legacy Windows instruction-patching driver in the J413 firmware volume.
+
+  #
+  # FAT filesystem + GPT/MBR partitioning
+  #
+
+  #
+  # ACPI Support
+  #
+  #
+  # SMBIOS Support
+  #
+
+  #
+  # Firmware-owned internal storage. The storage features attaches to
+  # iBoot's live ANS/RTKit state, exposes read-only EFI Block I/O, and preserves
+  # the warm handoff state for the eventual Windows boot-start miniport.
+  #
+
+  #
+  # UEFI applications
+  #
+
+  #
+  # Bds
+  #
+
+  # DT
+  #INF EmbeddedPkg/Drivers/DtPlatformDxe/DtPlatformDxe.inf
+
+  FILE FREEFORM = PCD(gMsCorePkgTokenSpaceGuid.PcdRegulatoryGraphicFileGuid) {
+    SECTION RAW = MacBookAirMid2020Pkg/Resources/RegulatoryLogos.png
+  }
+
+  #
+  # startup.nsh, executed automatically by the UEFI Shell. Attempt 37.
+  #
+  # Console input does not work yet (attempt 36), so this is how commands get
+  # run at all. FvSimpleFileSystemDxe (already in this FDF, line ~180) exposes
+  # FREEFORM files under FS0: using their SECTION UI name, and FS0 is this
+  # firmware volume -- which the Shell already reports in its mapping table. So
+  # a FREEFORM file named "startup.nsh" appears as FS0:\startup.nsh and the
+  # Shell picks it up on its own.
+  #
+  # Its output goes to ConOut, which since FW-7 includes the VUART, so it all
+  # lands in the screenlog with no interaction required.
+  #
+  # Remove or comment out once console input works and commands can be typed.
+  #
+  FILE FREEFORM = 7bef07a7-8072-49d4-ad75-02d9eab2b535 {
+    SECTION RAW = MacBookAir13M2Pkg/Resources/startup.nsh
+    SECTION UI = "startup.nsh"
+  }
+
+  # Embedded RAMDisk (ISO format)
+  #FILE FREEFORM = 650B7CD0-94F8-46CC-88DE-8C199D41EDA3 {
+  #SECTION RAW = AppleSiliconPkg/RAMDisk/WinPE.iso
+  #SECTION UI = "Embedded RAMDisk"
+#}
+
+  # Embedded RAMDisk (IMG format)
+  #FILE FREEFORM = 650B7CD0-94F8-46CC-88DE-8C199D41EDA3 {
+  #SECTION RAW = AppleSiliconPkg/RAMDisk/WinPE.img
+  #SECTION UI = "Embedded RAMDisk"
+#}
+
+  # No embedded RAM disk. AppleSiliconPkg/RAMDisk/ramtest.img was a 16 MiB
+  # FAT test image checked into git to prove the FV -> BootRamdiskHelperDxe
+  # -> EFI_RAM_DISK_PROTOCOL chain worked. It is build scaffolding, and a
+  # real WinPE will not fit here anyway: BootRamdiskHelperDxe does an
+  # AllocateCopyPool of the whole image, so it needs twice the size in RAM
+  # on top. Load it from m1n1 instead.
+
+  # Embedded USB firmware blob (for testing only!)
+  #FILE FREEFORM = d730ab59-670e-4a92-8475-b31939d05bb4 {
+  #SECTION RAW = AppleSiliconPkg/FirmwareBlobs/ASM2214A_PCI_XHCI_Controller.bin
+#}
+
+!include AppleSiliconPkg/FrontpageFdf.inc
+
+[FV.FVMAIN_COMPACT]
+FvAlignment        = 16
+ERASE_POLARITY     = 1
+MEMORY_MAPPED      = TRUE
+STICKY_WRITE       = TRUE
+LOCK_CAP           = TRUE
+LOCK_STATUS        = TRUE
+WRITE_DISABLED_CAP = TRUE
+WRITE_ENABLED_CAP  = TRUE
+WRITE_STATUS       = TRUE
+WRITE_LOCK_CAP     = TRUE
+WRITE_LOCK_STATUS  = TRUE
+READ_DISABLED_CAP  = TRUE
+READ_ENABLED_CAP   = TRUE
+READ_STATUS        = TRUE
+READ_LOCK_CAP      = TRUE
+READ_LOCK_STATUS   = TRUE
+
+  INF RuleOverride = SELF_RELOC AppleSiliconPkg/PrePi/PrePi.inf
+
+  FILE FV_IMAGE = 9E21FD93-9C72-4c15-8C4B-E77F1DB2D792 {
+    SECTION GUIDED EE4E5898-3914-4259-9D6E-DC7BD79403CF PROCESSING_REQUIRED = TRUE {
+      SECTION FV_IMAGE = FVMAIN
+    }
+  }
+
+!include AppleSiliconPkg/AppleSiliconFdfRules.fdf.inc

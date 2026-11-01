@@ -1,0 +1,49 @@
+## @file
+#  ACPI tables describing the Apple T8132 processor complex.
+#
+#  Copyright (c) 2026 Aurora Silicon
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = CPUAcpiTables
+  FILE_GUID                      = a8fe7a72-1b63-570e-90db-273f28d08ff5
+  MODULE_TYPE                    = USER_DEFINED
+  VERSION_STRING                 = 1.0
+
+[Sources]
+  #
+  # CSRT.aslc is NOT listed. It is a documented stub on this family -- the AIC
+  # geometry it needs has not been read off the hardware -- and a comment-only
+  # .aslc compiles to an object with no ReferenceAcpiTable, which fails the
+  # link rather than producing an empty table. Add it here in the same commit
+  # that fills it in, exactly as T810XFamilyPkg leaves it out today.
+  #
+  Cpus.asl
+  GTDT.aslc
+  MADT_Static.aslc
+  PPTT.aslc
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  ArmPkg/ArmPkg.dec
+  ArmPlatformPkg/ArmPlatformPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+  T8132FamilyPkg/T8132FamilyPkg.dec
+
+[FixedPcd]
+  gArmTokenSpaceGuid.PcdArmArchTimerSecIntrNum
+  gArmTokenSpaceGuid.PcdArmArchTimerIntrNum
+  gArmTokenSpaceGuid.PcdArmArchTimerHypIntrNum
+  gArmTokenSpaceGuid.PcdArmArchTimerVirtIntrNum
+  gArmTokenSpaceGuid.PcdGicDistributorBase
+  gArmTokenSpaceGuid.PcdGicRedistributorsBase
+  gAppleSiliconPkgTokenSpaceGuid.PcdCoreCount
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultOemId
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultOemTableId
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultOemRevision
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultCreatorId
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultCreatorRevision

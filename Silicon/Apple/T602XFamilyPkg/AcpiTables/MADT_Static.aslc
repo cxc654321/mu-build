@@ -1,0 +1,107 @@
+/**
+ * Copyright (c) 2023, amarioguy (AppleWOA authors).
+ * 
+ * Module Name:
+ *     MADT_Static.aslc
+ * 
+ * Abstract:
+ *     Multiple APIC Description Table. Implements the
+ *     MADT table for the MacBook Pro (Early 2023) platform -
+ *     This is only a temporary implementation 
+ *     until dynamic allocations in AcpiPlatformDxe are implemented.
+ * 
+ * Environment:
+ *     UEFI firmware/runtime services.
+ * 
+ * License:
+ *     Copyright (c) 2026 Aurora Silicon
+ *     SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
+ * 
+*/
+
+#include <Library/AcpiLib.h>
+#include <Library/ArmLib.h>
+#include <Library/PcdLib.h>
+#include <IndustryStandard/Acpi63.h>
+#include <Acpi/AcpiHeader.h>
+#include "T6020J414sTopology.h"
+
+//
+// J414s has ten active CPUs: four Blizzard cores followed by two three-core
+// Avalanche clusters.  CPU slots 7 and 11 are absent in the ADT and must not
+// be published.  T6020J414sTopology.h combines the live sparse ADT CPU list
+// with Linux's architectural MPIDR encoding; in particular P cores carry both
+// Aff2=1 and their Aff1 cluster number.
+//
+//
+// ASLC compiles this table outside the normal DXE PCD access path.  PCD-based
+// carrier addresses therefore emitted as zero (and the 32-bit GICR accessor
+// also truncates a T6020 address).  Keep the synthetic startup-carrier
+// apertures aligned with T602XFamilyPkg.dsc.inc and m1n1's vGIC hooks.
+//
+//
+// pulled from mu_tiano_platforms, since there's no equivalent GICR initializer.
+//
+#define MADT_GICR_INIT()  {                                           \
+   EFI_ACPI_6_4_GICR,                        /* Type */                        \
+   sizeof (EFI_ACPI_6_4_GICR_STRUCTURE),     /* Length */                      \
+   EFI_ACPI_RESERVED_WORD,                   /* Reserved */                    \
+   T6020_GICR_CARRIER_BASE,                  /* DiscoveryRangeBaseAddress */   \
+   T6020_GICR_FRAME_SIZE * T6020_J414S_CPU_COUNT /* DiscoveryRangeLength */    \
+   }
+
+#pragma pack (1)
+
+typedef struct {
+EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_HEADER   Header;
+EFI_ACPI_6_3_GIC_STRUCTURE                            GicInterfaces[T6020_J414S_CPU_COUNT];
+EFI_ACPI_6_0_GIC_DISTRIBUTOR_STRUCTURE                GicDistributor;
+EFI_ACPI_6_4_GICR_STRUCTURE                           GicRedistributor;
+} MULTIPLE_APIC_DESCRIPTION_TABLE;
+
+#pragma pack ()
+
+MULTIPLE_APIC_DESCRIPTION_TABLE Madt = {
+{
+    __ACPI_HEADER (
+    EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_SIGNATURE,
+    MULTIPLE_APIC_DESCRIPTION_TABLE,
+    EFI_ACPI_6_3_MULTIPLE_APIC_DESCRIPTION_TABLE_REVISION
+    ),
+    //
+    // MADT specific fields
+    //
+    0, // LocalApicAddress
+    0, // Flags
+},
+{
+    // Format: EFI_ACPI_6_3_GICC_STRUCTURE_INIT(GicId, AcpiCpuUid, Mpidr,
+    //     Flags, PmuIrq, GicBase, GicVBase, GicHBase, GsivId, GicRBase,
+    //     Efficiency, SpeOvflIrq)
+    // Note: The GIC Structure of the primary CPU must be the first entry (see note in 5.2.12.14 GICC Structure of
+    //       ACPI v5.1).
+    //
+    // PMU is intentionally not exposed through the temporary GIC carrier.  It
+    // is an Apple processor-local FIQ and becomes available through native AIC.
+    // Cores are ordered by cluster, with dense OS-visible UIDs.
+    //
+#define T6020_J414S_GICC(LogicalUid, AdtCpuId, Aff2, Aff1, Aff0, Efficiency)   \
+    EFI_ACPI_6_3_GICC_STRUCTURE_INIT(                                         \
+        LogicalUid, LogicalUid, GET_MPIDR(0, Aff2, Aff1, Aff0),               \
+        EFI_ACPI_6_3_GIC_ENABLED, 0 /* PMU not exposed by carrier */, 0,       \
+        0, 0, 25, 0 /* discover GICR via type-0x0e entry */, Efficiency, 0),
+    T6020_J414S_CPU_LIST(T6020_J414S_GICC)
+#undef T6020_J414S_GICC
+},
+EFI_ACPI_6_0_GIC_DISTRIBUTOR_INIT(0, T6020_GICD_CARRIER_BASE, 0, 3),
+// Format: EFI_ACPI_6_3_GIC_MSI_FRAME_INIT(GicMsiFrameId, PhysicalBaseAddress, Flags, SPICount, SPIBase)
+
+MADT_GICR_INIT(),
+
+};
+
+//
+// Reference the table being generated to prevent the optimizer from removing the
+// data structure from the executable
+//
+VOID* CONST ReferenceAcpiTable = &Madt;

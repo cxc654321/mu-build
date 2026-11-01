@@ -1,0 +1,225 @@
+# Copyright (c) 2026 Aurora Silicon
+
+[Defines]
+  DEC_SPECIFICATION              = 0x00010005
+  PACKAGE_NAME                   = AppleSiliconPkg
+  PACKAGE_GUID                   = 370eccba-e496-426b-b012-013496b3915a
+  PACKAGE_VERSION                = 1.0
+
+[Includes.common]
+  Include                        
+
+[Guids.common]
+  gAppleSiliconPkgTokenSpaceGuid = { 0xdac05d5e, 0x6b59, 0x4731, { 0x83, 0xf4, 0xfb, 0x40, 0x05, 0xb5, 0xcc, 0xdc } }
+  gAppleSiliconPkgEmbeddedRamdiskGuid = { 0x650b7cd0, 0x94f8, 0x46cc, { 0x88, 0xde, 0x8c, 0x19, 0x9d, 0x41, 0xed, 0xa3} }
+  gAppleSiliconPkgFdInfoHobGuid = { 0x9a1d4e6b, 0x2f7c, 0x4a88, { 0xbc, 0x31, 0x5e, 0x0a, 0x77, 0xd2, 0x64, 0x19} }
+  gAppleSiliconPkgEmbeddedUsbFirmwareGuid = { 0xd730ab59, 0x670e, 0x4a92, { 0x84, 0x75, 0xb3, 0x19, 0x39, 0xd0, 0x5b, 0xb4 } }
+  
+[Protocols]
+  # Private read-only view of AppleANS' EFI_BLOCK_IO_PROTOCOL implementation.
+  # It lets diagnostics issue a controlled first read without publishing the
+  # standard Block I/O GUID and triggering PartitionDxe/BDS enumeration.
+  gAppleAnsDiagnosticBlockIoProtocolGuid = { 0x51ae8c79, 0x98cc, 0x4cda, { 0x8a, 0xdc, 0x85, 0x1d, 0x89, 0xb3, 0x82, 0xfe } }
+
+[PcdsFixedAtBuild.common]
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleSocIdentifier|0|UINT32|0x0000389e
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleUartBase|0|UINT64|0x00003900
+  gAppleSiliconPkgTokenSpaceGuid.PcdInitializeRamdisk|FALSE|BOOLEAN|0x00003902
+  gAppleSiliconPkgTokenSpaceGuid.PcdCDBootFile|{ 0x27, 0xed, 0x1f, 0x27, 0x40, 0x34, 0x47, 0xe4, 0x97, 0x90, 0xdc, 0xaa, 0x11, 0xaa, 0x6b, 0xf4 }|VOID*|0x00003903
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleNumGpios|255|UINT8|0x00004701
+
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleSartVersion|0|UINT8|0x00004411
+  # RAM reservation (128 MB reserved for EFI FD image)
+  gAppleSiliconPkgTokenSpaceGuid.PcdSystemMemoryUefiRegionSize|0x8000000|UINT32|0x00004404
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciExpressBarLimit|0x0|UINT64|0x00004717
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciExpressBarSize|0x0|UINT64|0x00004718
+
+  #
+  # Inclusive limits and a bus count for the PCIe windows, alongside the base
+  # and size PCDs the SoC family packages already set from the apcie node.
+  #
+  # They exist because a ResourceTemplate cannot compute them. iasl substitutes
+  # FixedPcdGet fine but does not fold arithmetic in a descriptor field, so
+  # "Base + Size - 1" reaches it as a literal expression and it reports the
+  # maximum as lower than the minimum. Stating the limit outright is the only
+  # way a root bridge's _CRS can be written once and reused across SoCs.
+  #
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciBusCount|0x0|UINT32|0x00004726
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciMmio32Limit|0x0|UINT64|0x00004727
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciMmio64Limit|0x0|UINT64|0x00004728
+  # Optional ACPI published-GSIV <-> physical-AIC-line contract for ANS.
+  # A zero/zero pair publishes the live physical line directly.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishedInterrupt|0|UINT32|0x00004719
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsExpectedPhysicalInterrupt|0|UINT32|0x0000471A
+  # Publish the ANS controller in ACPI.  This must be TRUE only in builds
+  # whose FV also carries AppleNANDStorageDxe: an NTAS200x device with no
+  # driver behind it enumerates and then strands Windows storage.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishAcpiDevice|FALSE|BOOLEAN|0x0000471B
+  # Offer the internal NVMe namespace to the UEFI boot manager.  FALSE keeps
+  # the controller fully initialized -- and, importantly, stopped before
+  # boot -- while publishing no Block I/O, so BDS cannot enumerate a boot
+  # option for it.  Windows does not need it: the NTAS200x device comes from
+  # the runtime SSDT, which reads the live ADT directly.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishBlockIo|FALSE|BOOLEAN|0x0000471C
+  # Perform Mu's own ANS/RTKit/NVMe bring-up in DXE.
+  #
+  # FALSE (default) leaves the coprocessor, SART and NVMe registers exactly as
+  # iBoot handed them over; AppleNANDStorageDxe still runs discovery, the
+  # read-only PMGR report and the SART/memory-map diagnostics, then returns.
+  #
+  # Set FALSE on 2026-07-30: the `ans` build reproduced BUGCODE_USB3_DRIVER
+  # 0x144 with the Windows ANS driver DISABLED (Start=4), while `gpu` on the
+  # same commit and cable booted -- 6 boots / 0 failures for non-ANS builds
+  # versus 0 / 3 for ANS builds. With no OS driver loading, hardware state
+  # left behind by this bring-up was the only remaining variable. That older
+  # implementation hard-stopped a live un-quiesced coprocessor; the default
+  # stays off for existing builds. PcdAppleAnsPublishBlockIo is FALSE and the OS
+  # driver brings ANS up itself. The dedicated internal-storage build opts
+  # into the ownership-aware WAKE/COLD implementation and live OS handoff.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPerformDxeBringUp|FALSE|BOOLEAN|0x00004721
+  # Keep a successfully booted Mu controller live across ExitBootServices so
+  # AppleNvme can take its explicit warm-adoption path. Only internal-storage
+  # boot builds may enable this together with DXE bring-up and Block I/O.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPreserveForOs|FALSE|BOOLEAN|0x00004722
+  # Exact four-byte PMGR power-state registers, exported to NTAS2003's ACPI
+  # _CRS. RETRACTED 2026-07-30: earlier comments here and on Mu's own ANS
+  # bring-up code claimed touching ANS/SART/mailbox MMIO before this PMGR
+  # sequence runs "stalls the AMBA bus transaction" and that this sequence
+  # is "Windows' job, not Mu's". Both claims were measured false on hardware
+  # the same night: ANS2/APCIE_ST/APCIE_ST_SYS/APCIE_ST1_SYS were already
+  # ACTIVE (iBoot leaves them on; nothing powers them down before Mu runs),
+  # and a direct read of live ANS MMIO returned sane data with no stall.
+  # There was and is no PMGR dependency chain for anyone to own here.
+  # AppleNANDStorageDxe now performs its bring-up unconditionally; these
+  # four PCDs remain published to ACPI for whatever the OS side wants to do
+  # with them, not because Mu needs them sequenced first.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrResetBase|0|UINT64|0x0000471D
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieStBase|0|UINT64|0x0000471E
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieStSysBase|0|UINT64|0x0000471F
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieSt1SysBase|0|UINT64|0x00004720
+
+  # Keep the internal shell independent of USB during early T8142 bring-up.
+  # The platform can disable the USB keyboard console path and the later
+  # ConnectAll() pass without removing the xHCI drivers from the image.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleConnectUsbKeyboardConsole|TRUE|BOOLEAN|0x00004723
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleConnectAllForInternalShell|TRUE|BOOLEAN|0x00004724
+  # Permit a platform to preserve the SerialPortLib contract without touching
+  # UART MMIO.  This is useful while bringing up a SoC whose resident m1n1 does
+  # not yet trap the guest UART aperture safely.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleUartMmioEnabled|TRUE|BOOLEAN|0x00004725
+
+  # Stack stuff (128k stack by default)
+  #Fallback stack base in case ModuleEntryPoint setup won't work.
+  gAppleSiliconPkgTokenSpaceGuid.PcdSecPhaseStackBase|0x0|UINT64|0x0000440b
+  gAppleSiliconPkgTokenSpaceGuid.PcdSecPhaseStackSize|0x80000|UINT32|0x00004405
+
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosCpuModel|"Unknown Chip"|VOID*|0x00001009
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosCpuIdentifier|"Unknown ID"|VOID*|0x0000100a
+  # CPU frequency reporting for SMBIOS Type 4 (MHz, 0 = unknown/do not report).
+  # Set per SoC family; see the family .dsc.inc for the numbers and sources.
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosECoreMaxFreqMhz|0|UINT32|0x00001010
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosPCoreMaxFreqMhz|0|UINT32|0x00001011
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosBootFreqMhz|0|UINT32|0x00001012
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModel|"Unknown Mac"|VOID*|0x0000100b
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModelNumber|"Mac??,?"|VOID*|0x0000100c
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemFamily|"Mac Placeholder"|VOID*|0x0000100d
+  gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemSku|"Mac Placeholder (Year)"|VOID*|0x00001000e
+
+  gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferWidth|1920|UINT32|0x00004401
+  gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferHeight|1080|UINT32|0x00004402
+  gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferPixelBpp|30|UINT32|0x00004403
+  #
+  # Divide the panel down by this factor before publishing it as a GOP mode, and
+  # replicate each logical pixel into a DivisorxDivisor block on the way out.
+  # The UEFI console draws glyphs at a fixed 8x19 physical pixels, so on a HiDPI
+  # panel a divisor of 2 is the difference between readable and not.
+  #
+  # 1 means publish the panel exactly as it is, which is the pre-existing
+  # behaviour and stays the default for every machine that does not opt in.
+  #
+  gAppleSiliconPkgTokenSpaceGuid.PcdConsoleScaleDivisor|1|UINT32|0x00004409
+  gAppleSiliconPkgTokenSpaceGuid.PcdXhciPcieDeviceNumber|0|UINT32|0x00004700
+  #
+  # needed for the USB-C DART driver.
+  #
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleNumDwc3Darts|4|UINT32|0x00004702
+  #
+  # Number of DWC3 controllers on the SoC.
+  #
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleNumDwc3Controllers|1|UINT32|0x00004703
+  #
+  # Bitmask of usb-drdN ports whose USB3 PIPE mux AppleUsbTypeCBringupDxe is
+  # allowed to switch away from the dummy backend after its dwc3 core init.
+  #
+  # This is an opt-in for a two-stage handoff: m1n1 configures the ATC PHY and
+  # deliberately leaves the mux on DUMMY, because the switch has to happen after
+  # dwc3 core init (Asahi dwc3-apple.c:29) and that only exists here. Setting a
+  # bit here does NOT force a switch -- the driver additionally requires the PHY
+  # to report itself powered and out of reset, so a port whose PHY m1n1 never
+  # touched is left on USB2 regardless.
+  #
+  # Default 0: no port opts in, behaviour identical to before this existed.
+  #
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleUsb3PipeSwitchPortMask|0x00000000|UINT32|0x00004704
+
+  #
+  # Bitmask of ATC ports whose ROUTED (USB4/Thunderbolt) PIPE mux
+  # AppleUsbTypeCBringupDxe may switch to 0x11 after dwc3 core init.
+  #
+  # Deliberately a SEPARATE token from PcdAppleUsb3PipeSwitchPortMask: direct
+  # USB3 (0x08) and a routed USB4 tunnel (0x11) are different mux values on the
+  # same PHY, so a port must never appear in both masks. Setting a bit here does
+  # NOT force a switch -- the driver additionally requires the PHY to report
+  # itself powered/out-of-reset AND the lanes to be crossbarred for USB4/TBT.
+  #
+  # Default 0: no port opts in, behaviour identical to before this existed.
+  #
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleUsb4RoutedPipeSwitchPortMask|0x00000000|UINT32|0x00004705
+  #File name GUID for frontpage app
+  gAppleSiliconPkgTokenSpaceGuid.PcdUIApplicationFile|{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }|VOID*|0x00004408
+
+  ## GUIDs for ACPI tables
+  # @Prompt FFS name of ACPI tables storage.
+
+  #
+  # 2f0f9a5f-f300-420a-9284-41898e9c376a
+  # 3ff4732c-9411-4e10-a10c-8b39df282e83
+  # d1430d86-24a4-4c2f-8f22-d24376e2e888
+  gAppleSiliconPkgTokenSpaceGuid.PcdDeviceFamilyAcpiTableStorageFile|{ 0x5f, 0x9a, 0x0f, 0x2f, 0x00, 0xf3, 0x0a, 0x42, 0x92, 0x84, 0x41, 0x89, 0x8e, 0x9c, 0x37, 0x6a}|VOID*|0x00004503
+  gAppleSiliconPkgTokenSpaceGuid.PcdDeviceAcpiTableStorageFile|{ 0x2c, 0x73, 0xf4, 0x3f, 0x11, 0x94, 0x10, 0x4e, 0xa1, 0x0c, 0x8b, 0x39, 0xdf, 0x28, 0x2e, 0x83 }|VOID*|0x00004500
+  gAppleSiliconPkgTokenSpaceGuid.PcdSocAcpiTableStorageFile|{ 0x86, 0x0d, 0x43, 0xd1, 0xa4, 0x24, 0x2f, 0x4c, 0x8f, 0x22, 0xd2, 0x43, 0x76, 0xe2, 0xe8, 0x88 }|VOID*|0x00004501
+  gAppleSiliconPkgTokenSpaceGuid.PcdGenericAcpiTableStorageFile|{ 0xf6, 0xcc, 0x7b, 0xa5, 0xa5, 0x0c, 0x9a, 0x43, 0xb8, 0xa6, 0xeb, 0x40, 0xff, 0x03, 0x58, 0x27 }|VOID*|0x00004502
+
+  #FDT pointer
+  gAppleSiliconPkgTokenSpaceGuid.PcdAdtPointer|0|UINT64|0x00003901
+  gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer|0|UINT64|0x00003905
+
+
+[PcdsDynamic.common]
+
+[PcdsPatchableInModule.common]
+  #Framebuffer (this will be filled in by iBoot)
+  gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferAddress|0x0|UINT64|0x00004400
+  gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferSize|0x0|UINT64|0x00004410
+  # m1n1-owned wireless DART SID-1 page-table reservation. CORRECTED
+  # 2026-07-30: this used to be a FixedAtBuild PCD populated from a
+  # hand-picked, pre-sealed manifest file at build time -- baking a chosen
+  # base into a build is exactly the mistake that produced the GPU PEI
+  # crash earlier tonight (a hardcoded carveout address that went stale
+  # and landed on Mu's own live stack). PatchableInModule instead, like
+  # PcdFrameBufferAddress above: MemoryInitPeiLib.c derives both values at
+  # boot from boot-args (mem_size_actual) and PcdSystemMemoryBase/Size,
+  # the same live inputs SystemMemoryTop already comes from, and
+  # AcpiPlatformDxe reads the result back to publish DRT0. Zero/zero means
+  # "not derived this boot" (NTASI_ENABLE_WIRELESS_DART_HANDOFF built out,
+  # or the boot-args inputs did not clear m1n1's own reservation
+  # validator) -- never a signal to fall back to a guessed address.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleWirelessDartPageTableBase|0x0|UINT64|0x00003910
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleWirelessDartPageTableSize|0x0|UINT32|0x00003911
+
+[PcdsPatchableInModule.common, PcdsFixedAtBuild.common]
+  #
+  # Number of cores (this is a default value that SoC specific files override.)
+  #
+  gAppleSiliconPkgTokenSpaceGuid.PcdCoreCount|1|UINT32|0x00004406
+  gAppleSiliconPkgTokenSpaceGuid.PcdClusterCount|1|UINT32|0x00004407

@@ -1,0 +1,52 @@
+## @file
+#  ACPI tables for a machine whose board has not been measured.
+#
+#  Only the tables whose contents are PCDs the SoC family package sets from
+#  Asahi's device tree, plus the processor tree that package generates. See
+#  DSDT.asl for what is deliberately absent and why.
+#
+#  Copyright (c) 2026 Aurora Silicon
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = DeviceAcpiTables
+  FILE_GUID                      = 6d2f5c8a-1b47-5c93-9f2e-3a71c4d80e15
+  MODULE_TYPE                    = USER_DEFINED
+  VERSION_STRING                 = 1.0
+
+[Sources]
+  DBG2.aslc
+  MCFG.aslc
+  DSDT.asl
+
+[Packages]
+  ArmPkg/ArmPkg.dec
+  ArmPlatformPkg/ArmPlatformPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+
+[FixedPcd]
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultCreatorId          ## CONSUMES
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultCreatorRevision    ## CONSUMES
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultOemId              ## CONSUMES
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultOemTableId         ## CONSUMES
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultOemRevision        ## CONSUMES
+  gArmTokenSpaceGuid.PcdPciBusMin
+  gArmTokenSpaceGuid.PcdPciBusMax
+  gArmTokenSpaceGuid.PcdPciMmio32Base
+  gArmTokenSpaceGuid.PcdPciMmio32Size
+  gEfiMdePkgTokenSpaceGuid.PcdPciMmio32Translation
+  gEfiMdePkgTokenSpaceGuid.PcdPciMmio64Translation
+  gArmTokenSpaceGuid.PcdPciMmio64Base
+  gArmTokenSpaceGuid.PcdPciMmio64Size
+  gEfiMdePkgTokenSpaceGuid.PcdPciExpressBaseAddress
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciExpressBarSize
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciExpressBarLimit
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciBusCount
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciMmio32Limit
+  gAppleSiliconPkgTokenSpaceGuid.PcdPciMmio64Limit
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleUartBase

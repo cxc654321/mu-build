@@ -1,0 +1,31 @@
+# Copyright (c) 2026 Aurora Silicon
+
+[Defines]
+  INF_VERSION                    = 0x0001001A
+  BASE_NAME                      = WindowsPmuCompatDxe
+  FILE_GUID                      = 3E3AC8BF-5C34-44F3-A1CE-228A1574F221
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = WindowsPmuCompatDxeInitialize
+
+[Sources]
+  WindowsPmuCompatDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  CacheMaintenanceLib
+  DebugLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+  UefiLib
+
+[Protocols]
+  gEfiLoadedImageProtocolGuid
+
+[Guids]
+  gEfiEventExitBootServicesGuid
+
+[Depex]
+  TRUE

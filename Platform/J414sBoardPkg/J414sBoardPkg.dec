@@ -1,0 +1,23 @@
+## @file
+#  J414sBoardPkg -- ACPI describing the logic board of the MacBook Pro (14-inch, M2 Pro, 2023).
+#
+#  Named for the machine it was measured on, because that is what makes its
+#  provenance true. Other machines share it when they share the board; see
+#  Readme.md.
+#
+#  Copyright (c) 2026 Aurora Silicon
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  DEC_SPECIFICATION              = 0x00010005
+  PACKAGE_NAME                   = J414sBoardPkg
+  PACKAGE_GUID                   = f17c82bf-4eff-529e-b17d-a4da2bb0e7c7
+  PACKAGE_VERSION                = 1.0
+
+[Includes.common]
+  Include
+
+[Guids.common]
+  gJ414sBoardPkgTokenSpaceGuid = { 0x8d670f73, 0x1b4b, 0x5ff0, { 0xa4, 0x85, 0xdd, 0x41, 0x50, 0xd1, 0xe5, 0x12 } }
+

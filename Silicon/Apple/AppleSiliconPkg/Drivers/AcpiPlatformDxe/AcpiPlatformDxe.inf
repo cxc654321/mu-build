@@ -1,0 +1,97 @@
+## @file
+#  Sample ACPI Platform Driver
+#
+#  Copyright (c) 2008 - 2018, Intel Corporation. All rights reserved.<BR>
+#  Copyright (c) 2026 Aurora Silicon
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = AcpiPlatform
+  MODULE_UNI_FILE                = AcpiPlatform.uni
+  FILE_GUID                      = cb933912-df8f-4305-b1f9-7b44fa11395c
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = AcpiPlatformEntryPoint
+
+#
+# The following information is for reference only and not required by the build tools.
+#
+#  VALID_ARCHITECTURES           = IA32 X64 EBC
+#
+
+[Sources]
+  AcpiPlatform.c
+  NtasiGpuReservationGuard.h
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  ArmPkg/ArmPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+  DynamicTablesPkg/DynamicTablesPkg.dec
+
+[LibraryClasses]
+  UefiLib
+  PcdLib
+  DebugLib
+  # ZeroMem() for the GPU preboot-handoff placeholder block and the handoff
+  # struct. Added 2026-07-31 with NTAS0023 publication; nothing in this module
+  # needed BaseMemoryLib before that.
+  BaseMemoryLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+  AppleDTLib
+  AmlLib
+  MemoryAllocationLib
+  DxeServicesTableLib
+  # AppleAnsPmgrDomain.h reads (never writes) the ADT-resolved PMGR
+  # power-state words for the ANS domains.
+  IoLib
+  PrintLib
+  # PEI -> DXE wireless DART reservation handoff
+  # (NTASI_WIRELESS_DART_RESERVATION_HOB_GUID); the PatchableInModule PCDs
+  # this replaced never crossed the phase boundary.
+  HobLib
+
+[Protocols]
+  gEfiAcpiTableProtocolGuid                     ## CONSUMES
+  gEfiFirmwareVolume2ProtocolGuid               ## CONSUMES
+
+[FixedPcd]
+  # Read by Include/Platform/NtasiMediaJ414s.h to refuse a build that would
+  # publish one machine's media addresses on another.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleSocIdentifier              ## CONSUMES
+  # Upper bound on the ADT's /cpus index when trimming the MADT to the cores
+  # this unit actually has.
+  gAppleSiliconPkgTokenSpaceGuid.PcdCoreCount                       ## CONSUMES
+
+[Pcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdDeviceAcpiTableStorageFile    ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdDeviceFamilyAcpiTableStorageFile    ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdSocAcpiTableStorageFile       ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdGenericAcpiTableStorageFile   ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishedInterrupt    ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsExpectedPhysicalInterrupt ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishAcpiDevice    ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrResetBase        ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieStBase     ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieStSysBase  ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieSt1SysBase ## CONSUMES
+  gArmTokenSpaceGuid.PcdSystemMemoryBase                        ## CONSUMES
+  gArmTokenSpaceGuid.PcdSystemMemorySize                        ## CONSUMES
+  # Real installed-DRAM capacity (boot_args mem_size_actual) -- the only
+  # bound that can distinguish a live GPU UAT carveout above
+  # PcdSystemMemorySize's ceiling from a stale hardcoded constant. See
+  # NtasiDerivePhysicalDramWindow() in AcpiPlatform.c.
+  gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer              ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleWirelessDartPageTableBase ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleWirelessDartPageTableSize ## CONSUMES
+
+[Depex]
+  gEfiAcpiTableProtocolGuid
+
+[UserExtensions.TianoCore."ExtraFiles"]
+  AcpiPlatformExtra.uni

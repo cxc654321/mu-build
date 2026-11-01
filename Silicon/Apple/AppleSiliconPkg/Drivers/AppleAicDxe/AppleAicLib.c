@@ -1,0 +1,271 @@
+/**
+ * @file AppleAicLib.c
+ * @author amarioguy (Arminder Singh)
+ * @brief 
+ * @version 1.9
+ * @date 2022-09-24
+ * 
+ * @copyright Copyright (c) amarioguy (Arminder Singh), 2022.
+ * Copyright (c) 2026 Aurora Silicon
+ * 
+ */
+#include <Base.h>
+#include <Library/ArmLib.h>
+#include <Library/DebugLib.h>
+#include <Library/IoLib.h>
+#include <Library/AppleAicLib.h>
+#include <Library/AppleDTLib.h>
+
+
+STATIC APPLE_AIC_VERSION mAicVersion;
+
+// AICv3 relocates the capability registers; the DXE discovers their offsets from
+// the ADT (cap0-offset / maxnumirq-offset) and publishes them here via
+// AppleAicV3SetDynamicOffsets(). These t8122/t6030 defaults match AICv2 so a
+// machine that omits the ADT properties still reads sane values.
+STATIC UINT32 mAicV3Cap0Offset      = AIC_V2_INFO_REG1;
+STATIC UINT32 mAicV3MaxNumIrqOffset = AIC_V2_INFO_REG3;
+
+VOID EFIAPI AppleAicV3SetDynamicOffsets(IN UINT32 Cap0Offset, IN UINT32 MaxNumIrqOffset)
+{
+    mAicV3Cap0Offset = Cap0Offset;
+    mAicV3MaxNumIrqOffset = MaxNumIrqOffset;
+}
+
+/**
+ * @brief Returns the version of AIC on the platform.
+ *
+ * @return APPLE_AIC_VERSION_1 if using AICv1, APPLE_AIC_VERSION_2 for AICv2, APPLE_AIC_VERSION_3 for AICv3.
+ */
+APPLE_AIC_VERSION EFIAPI AppleArmGetAicVersion(VOID)
+{
+    //sanity test: check that MIDR_EL1[31:24] holds the Apple implementer code (0x61).
+    //(The previous `Midr & 0x61000000` test also matched non-Apple implementers
+    //such as ARM Ltd's 0x41, since it only required any of those bits to be set.)
+    UINT32 Midr = ArmReadMidr();
+    if (((Midr >> 24) & 0xFF) == 0x61)
+    {
+        dt_node_t *InterruptControllerNode = dt_get("aic");
+        if (!InterruptControllerNode) {
+            DEBUG((EFI_D_INFO | EFI_D_LOAD | EFI_D_ERROR, "no ADT supplied, exiting\n"));
+            ASSERT(FALSE);
+        }
+
+        CHAR8 *CompatibleStr;
+        UINTN CompatibleStrLength = 0;
+        CompatibleStr = dt_node_prop(InterruptControllerNode, "compatible", &CompatibleStrLength);
+
+        // Distinguish aic,3 from aic,2: they share a register layout but AICv3
+        // relocates IRQ_CFG to 0x10000 and reads its capability offsets from the
+        // ADT, so it must not be collapsed into APPLE_AIC_VERSION_2. Default to
+        // AICv1 when the platform names neither.
+        if (!AsciiStrCmp(CompatibleStr, "aic,3"))
+        {
+            mAicVersion = APPLE_AIC_VERSION_3;
+        }
+        else if (!AsciiStrCmp(CompatibleStr, "aic,2"))
+        {
+            mAicVersion = APPLE_AIC_VERSION_2;
+        }
+        else
+        {
+            mAicVersion = APPLE_AIC_VERSION_1;
+        }
+        return mAicVersion;
+    }
+    else
+    {
+        DEBUG((DEBUG_INFO, "Not on an Apple platform, AIC won't be present. Aborting\n"));
+        return APPLE_AIC_VERSION_UNKNOWN;
+    }
+}
+
+
+/**
+ * Reads the event register on the platform AIC, which serves as an interrupt ack
+ * (masks it at the same time)
+ * 
+ * @return UINT32 - Event register value
+ */
+UINT32 EFIAPI AppleAicAcknowledgeInterrupt(
+    IN UINT64 AicEventRegister
+)
+{
+    return MmioRead32(AicEventRegister);
+}
+
+/**
+ * Return the implemented number of IRQs on the platform.
+ * 
+ * @param AicBase - AIC base address
+ * @return UINT32 - number of IRQs
+ */
+UINT32 EFIAPI AppleAicGetNumInterrupts(
+    IN UINTN AicBase
+)
+{
+    UINT32 NumIrqs;
+    if(mAicVersion == APPLE_AIC_VERSION_2)
+    {
+        NumIrqs = MmioRead32(AicBase + AIC_V2_INFO_REG1) & AIC_V2_NUM_AND_MAX_IRQS_MASK;
+    }
+    else if (mAicVersion == APPLE_AIC_VERSION_1)
+    {
+        NumIrqs = MmioRead32(AicBase + AIC_V1_HW_INFO) & AIC_V2_NUM_AND_MAX_IRQS_MASK;
+    }
+    else if (mAicVersion == APPLE_AIC_VERSION_3)
+    {
+        // Same INFO1/cap0 layout as AICv2, but at the ADT-published offset.
+        NumIrqs = MmioRead32(AicBase + mAicV3Cap0Offset) & AIC_V2_NUM_AND_MAX_IRQS_MASK;
+    }
+    else {
+        NumIrqs = 0;
+    }
+    return NumIrqs;
+}
+
+/**
+ * Returns the maximum supported number of IRQs on the SoC.
+ * 
+ * @param AicBase - AIC Base Address
+ * @return UINT32 - max number of IRQs supported on the SoC.
+ */
+UINT32 EFIAPI AppleAicGetMaxInterrupts(
+    IN UINTN AicBase
+)
+{
+    UINT32 MaxIrqs;
+    if(mAicVersion == APPLE_AIC_VERSION_2)
+    {
+        MaxIrqs = MmioRead32(AicBase + AIC_V2_INFO_REG3) & AIC_V2_NUM_AND_MAX_IRQS_MASK;
+    }
+    else if (mAicVersion == APPLE_AIC_VERSION_1)
+    {
+        //AICv1 is hard capped to 1024 IRQs
+        MaxIrqs = AIC_MAX_IRQ;
+    }
+    else if (mAicVersion == APPLE_AIC_VERSION_3)
+    {
+        // Same INFO3/maxnumirq layout as AICv2, but at the ADT-published offset.
+        MaxIrqs = MmioRead32(AicBase + mAicV3MaxNumIrqOffset) & AIC_V2_NUM_AND_MAX_IRQS_MASK;
+    }
+    else {
+        MaxIrqs = 0;
+    }
+    return MaxIrqs;
+}
+
+/**
+ * @brief Masks an IRQ by writing to the AIC's MASK_SET register.
+ * 
+ * Note that all FIQ sources are directly implemented in the cores instead of going through AIC.
+ * 
+ * @param AicBase - AIC Base Address
+ * @param Source - IRQ number 
+ * 
+ */
+VOID EFIAPI AppleAicMaskInterrupt(
+    IN UINTN AicBase,
+    IN UINTN Source,
+    IN UINTN AicMaskSetRegOffset
+)
+{
+    /**
+     * Here's the general flow of how this works:
+     * 
+     * 1) Find out which CPU die the IRQ is on (if this is for AICv2)
+     * 2) Calculate the bit of MASK_SET that needs to be written to.
+     * 3) perform the memory write.
+     * 
+     * On AICv1, the CPU die calculation is skipped (there's only one CPU die on all AICv1 systems)
+     * 
+     * Note that the IRQ number must match the representation in hardware.
+     * 
+     * For the timer FIQs, return for now, as we disable/enable those independently.
+     * 
+     **/
+
+    if((Source == 17) || (Source == 18) || (Source == 19)) {
+        return;
+    }
+    UINT32 CpuDieNum = 0;
+    //DEBUG((DEBUG_INFO, "%a: masking interrupt 0x%llx\n", __FUNCTION__, Source));
+    if (mAicVersion == APPLE_AIC_VERSION_2 || mAicVersion == APPLE_AIC_VERSION_3)
+    {
+        //the IRQ number will come from DeviceTree, which uses the interrupt numbers as they are in hardware
+        CpuDieNum = (Source / AicInfoStruct->MaxIrqs) * AicInfoStruct->DieStride;
+    }
+    UINT32 IrqNum = Source % AicInfoStruct->MaxIrqs;
+
+    //DEBUG((DEBUG_VERBOSE, "Writing to 0x%llx with value 0x%llx, 0x%llx, IRQ MASK_SET = 0x%llx\n", AicBase + AicMaskSetRegOffset + CpuDieNum + AIC_MASK_REG(IrqNum), AIC_MASK_BIT(IrqNum), AicBase + AicMaskSetRegOffset));
+
+    MmioWrite32(AicBase + AicMaskSetRegOffset + CpuDieNum + AIC_MASK_REG(IrqNum), AIC_MASK_BIT(IrqNum));
+
+}
+
+/**
+ * @brief Unmask an IRQ by writing to the AIC's MASK_CLR register.
+ * 
+ * Note that all FIQ sources are directly implemented in the cores instead of going through AIC.
+ * 
+ * @param AicBase - AIC Base Address
+ * @param Source - IRQ number 
+ * 
+ */
+VOID EFIAPI AppleAicUnmaskInterrupt(
+    IN UINTN AicBase,
+    IN UINTN Source,
+    IN UINTN AicMaskClearRegOffset
+)
+{
+    /**
+     * The general flow is the same as AppleAicMaskInterrupt, but instead of 
+     * writing MASK_SET, we write MASK_CLR instead.
+     **/
+    if((Source == 17) || (Source == 18) || (Source == 19)) {
+        return;
+    }
+    UINT32 CpuDieNum = 0;
+    //DEBUG((DEBUG_INFO, "%a: unmasking interrupt 0x%llx\n", __FUNCTION__, Source));
+    if (mAicVersion == APPLE_AIC_VERSION_2 || mAicVersion == APPLE_AIC_VERSION_3)
+    {
+        //the IRQ number will come from DeviceTree, which uses the interrupt numbers as they are in hardware
+        CpuDieNum = Source / AicInfoStruct->MaxIrqs * AicInfoStruct->DieStride;
+    }
+    UINT32 IrqNum = Source % AicInfoStruct->MaxIrqs;
+
+    //DEBUG((DEBUG_VERBOSE, "Writing to 0x%llx with value 0x%llx, 0x%llx, IRQ MASK_CLR = 0x%llx\n", AicBase + AicMaskClearRegOffset + CpuDieNum + AIC_MASK_REG(IrqNum), AIC_MASK_BIT(IrqNum), AicBase + AicMaskClearRegOffset));
+
+    MmioWrite32(AicBase + AicMaskClearRegOffset + CpuDieNum + AIC_MASK_REG(IrqNum), AIC_MASK_BIT(IrqNum));
+
+}
+
+/**
+ * Read interrupt state from the AIC's HW_STATE register
+ * 
+ * @param AicBase - AIC base address
+ * @param Source - IRQ number
+ * @return TRUE if enabled, FALSE if disabled.
+ */
+BOOLEAN EFIAPI AppleAicReadInterruptState(
+    IN UINTN AicBase,
+    IN UINTN Source,
+    IN UINTN AicHwStateRegOffset
+)
+{
+    UINT32 CpuDieOffset = 0;
+    UINT32 HwStateValue = 0;
+    UINT32 AicIrqMaskBit = 0;
+    UINT32 Result = 0;
+    DEBUG((DEBUG_INFO, "%a: reading interrupt state for IRQ number 0x%llx", __FUNCTION__, Source));
+    if (mAicVersion == APPLE_AIC_VERSION_2 || mAicVersion == APPLE_AIC_VERSION_3)
+    {
+        CpuDieOffset = Source / AicInfoStruct->MaxIrqs * AicInfoStruct->DieStride;
+    }
+    UINT32 IrqNum = Source % AicInfoStruct->MaxIrqs;
+    HwStateValue = MmioRead32(AicBase + AicHwStateRegOffset + CpuDieOffset + AIC_MASK_REG(IrqNum));
+    AicIrqMaskBit = AIC_MASK_BIT(IrqNum);
+    Result = HwStateValue & AicIrqMaskBit;
+
+    return Result != 0;
+}

@@ -1,0 +1,92 @@
+#
+#  Copyright (c) 2023, AppleWOA authors. All rights reserved.
+#
+#  Module Name:
+#    AppleNANDStorageDxe.inf
+#  
+#  Abstract:
+#    Apple NAND Storage controller driver for Apple Silicon platforms.
+#
+#  Environment:
+#    UEFI Driver Execution Environment (DXE)
+#
+#  License:
+#    Copyright (c) 2026 Aurora Silicon
+#    SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+
+[Defines]
+  INF_VERSION                    = 0x0001001c
+  BASE_NAME                      = AppleNANDStorageDxe
+  FILE_GUID                      = acda0196-4589-4e4f-b71d-e9f9c2b2ea3d
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = AppleNANDStorageDxeInitialize
+
+
+[Sources]
+  AppleNANDStorageDxe.c
+  limits.h
+  stdbool.h
+  stddef.h
+  stdint.h
+  string.h
+  Shared/AppleAscCore.c
+  Shared/AppleNvmeBlockCore.c
+  Shared/AppleNvmeControllerCore.c
+  Shared/AppleNvmeCore.c
+  Shared/AppleRtkitCore.c
+  Shared/AppleRtkitRuntimeCore.c
+  Shared/AppleSartCore.c
+  Shared/AppleSartRuntimeCore.c
+
+
+[Packages]
+  ArmPkg/ArmPkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  MdePkg/MdePkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+
+[LibraryClasses]
+  PcdLib
+  AppleDTLib
+  ArmLib
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  DevicePathLib
+  HobLib
+  IoLib
+  MemoryAllocationLib
+  PrintLib
+  TimerLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+
+[Protocols]
+  gAppleAnsDiagnosticBlockIoProtocolGuid ## PRODUCES
+  gEfiBlockIoProtocolGuid      ## PRODUCES
+  gEfiDevicePathProtocolGuid   ## PRODUCES
+  gEfiPartitionInfoProtocolGuid ## CONSUMES
+  gEfiSimpleFileSystemProtocolGuid ## CONSUMES
+
+[Guids]
+  gEfiEventExitBootServicesGuid
+  gEfiEventReadyToBootGuid
+  gAppleSiliconPkgFdInfoHobGuid
+
+[Pcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer           ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishBlockIo    ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPerformDxeBringUp ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPreserveForOs     ## CONSUMES
+  # Hardware-confirmed expectations for the four pmgr_east power-state words.
+  # Consumed ONLY as a corroboration check against the live-ADT resolution in
+  # AppleAnsPmgrReportDomain(); never used as an address to read on their own.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrResetBase        ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieStBase      ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieStSysBase   ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPmgrApcieSt1SysBase  ## CONSUMES
+
+[Depex]
+  TRUE

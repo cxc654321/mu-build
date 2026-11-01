@@ -1,0 +1,55 @@
+#
+#
+#  Module Name:
+#    AppleMtpHidDxe.inf
+#
+#  Abstract:
+#    Internal keyboard transport for Apple silicon laptops whose keyboard hangs
+#    off the MTP (Multi-Touch Processor) over dockchannel -- M2-and-later,
+#    including J704 (M5). Stage 1 surveys the hardware; the eventual goal is a
+#    HID_IO_PROTOCOL producer that Project Mu's HidKeyboardDxe consumes.
+#
+#  Environment:
+#    UEFI Driver Execution Environment (DXE)
+#
+#  License:
+#    Copyright (c) 2026 Aurora Silicon
+#    SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+#    Register layout is derived from m1n1 (MIT):
+#      proxyclient/m1n1/hw/dockchannel.py
+#      proxyclient/m1n1/hw/asc.py
+#      proxyclient/experiments/mtp.py
+#
+
+[Defines]
+  INF_VERSION                    = 0x0001000c
+  BASE_NAME                      = AppleMtpHidDxe
+  FILE_GUID                      = 0a22f551-80a7-4d6c-a5c6-0b1de41c6353
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = AppleMtpHidDxeInitialize
+
+[Sources]
+  AppleMtpHidDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  ArmPkg/ArmPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  IoLib
+  TimerLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+  UefiLib
+  AppleDTLib
+
+[Depex]
+  TRUE

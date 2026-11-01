@@ -1,0 +1,264 @@
+/*
+ * Copyright (c) 2026 Aurora Silicon
+ */
+
+/** @file
+  T8142 / J813 (M5 MacBook Air) native AIC3 Core System Resource Table.
+
+  This is the Project Mu representation of the versioned, pointer-free ABI in
+  AuroraSilicon/drivers/AppleAic/aic3_csrt.h.  Keep it byte-for-byte equivalent
+  to the "t8142-j813" fixture emitted by drivers/AppleAic/emit_aic3_csrt.c.
+
+  WHAT THIS TABLE DOES
+  --------------------
+  It is the one missing piece that stops HalExtAppleInterruptController.dll --
+  a real Microsoft HAL extension, so Windows itself stays unmodified -- from
+  loading on this machine.  Without it Windows runs on the software GIC CPU
+  interface m1n1 emulates in hv_exc.c, where every interrupt acknowledge and
+  EOI is a trap to EL2: one measured WinPE boot cost ~373,000 of them across
+  ten cores.  With it, Windows drives the real AIC3 and the interrupt path
+  leaves the hypervisor entirely.
+
+  The previous contents of this file were a comment block explaining why no
+  table existed, ending "*** NOT IMPLEMENTED, AND NOT PART OF THE BUILD. ***".
+  One claim in it is now obsolete and worth naming rather than deleting
+  silently: it said the AIC half was "moot" because m1n1 emulates a GICv3.
+  That was true as a description of how the machine booted, and it is exactly
+  the cost this table removes.  The DART/IOMMU half it also raised remains
+  genuinely unaddressed.
+
+  WHY BYTES AND NOT STRUCTS
+  -------------------------
+  Same reason as T602XFamilyPkg/AcpiTables/CSRT.aslc: keeping the complete
+  table as bytes makes ABI drift mechanically detectable in host tests instead
+  of relying on the host and Mu compilers to pack a 144-byte struct alike.  The
+  constants included from T8142J813Topology.h therefore do NOT build the table;
+  they exist so the assertions below can check it.
+
+  ORDER OF DEPLOYMENT -- READ BEFORE ENABLING ANYTHING
+  ----------------------------------------------------
+  This table is inert on its own.  Windows only acts on it if the HAL extension
+  is also bound through Control\OSExtensionDatabase\VEN_APPL&DEV_0008, which is
+  a separate change to the Windows image.  The dangerous combination is the
+  HAL extension installed while m1n1 still owns interrupts, or m1n1's native
+  transition hooks enabled while this table is absent -- the latter reproduces
+  bugcheck 0x5C, because timer expiries get reflected into a Mu-reserved
+  software IRQ that nothing reads after ExitBootServices.  CSRT first, always.
+
+  SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
+**/
+
+#include <Base.h>
+#include <IndustryStandard/Acpi.h>
+
+#include "T8142J813Topology.h"
+
+//
+// Windows' ARM64 PnP interrupt arbiter accepts GSIVs only in [32, 1024).
+// Anything outside is refused with problem=12 (CM_PROB_NO_VALID_LOG_CONFIG),
+// which is how both devices below presented before they were aliased.  Assert
+// the published numbers are legal and the physical ones genuinely are not --
+// an alias for a line that never needed one is a translation waiting to
+// misroute something.
+//
+STATIC_ASSERT (
+  T8142_J813_GSIV_MTP >= 32 && T8142_J813_GSIV_MTP < 1024 &&
+  T8142_J813_GSIV_ANS >= 32 && T8142_J813_GSIV_ANS < 1024 &&
+  T8142_J813_GSIV_USB >= 32 && T8142_J813_GSIV_USB < 1024,
+  "a published GSIV is outside the Windows ARM64 PnP arbiter's [32,1024)"
+  );
+
+STATIC_ASSERT (
+  T8142_J813_AIC_LINE_MTP >= 1024 && T8142_J813_AIC_LINE_ANS >= 1024 &&
+  T8142_J813_AIC_LINE_USB >= 1024,
+  "aliasing a line the arbiter would have accepted unaliased"
+  );
+
+STATIC_ASSERT (
+  T8142_J813_GSIV_MTP != T8142_J813_GSIV_ANS &&
+  T8142_J813_GSIV_MTP != T8142_J813_GSIV_USB &&
+  T8142_J813_GSIV_ANS != T8142_J813_GSIV_USB,
+  "two published GSIVs collide; one number would mean two physical AIC lines"
+  );
+
+//
+// Translation is the identity on an alias miss, so a published number that is
+// also a live physical line silently delivers the wrong device's interrupts.
+//
+STATIC_ASSERT (
+  T8142_J813_GSIV_MTP != T8142_J813_AIC_LINE_USB &&
+  T8142_J813_GSIV_ANS != T8142_J813_AIC_LINE_USB &&
+  T8142_J813_GSIV_USB != T8142_J813_AIC_LINE_MTP &&
+  T8142_J813_GSIV_USB != T8142_J813_AIC_LINE_ANS &&
+  T8142_J813_GSIV_USB != T8142_J813_AIC_LINE_USB,
+  "a published GSIV is also a physical line in this table"
+  );
+
+//
+// m1n1 keeps its own timer software IRQs in [2352, 2400) at the very top of
+// AIC space.  A published GSIV is low by construction, so it cannot collide --
+// but the physical side must not either, and that is not self-evident.
+//
+STATIC_ASSERT (
+  (T8142_J813_AIC_LINE_MTP < T8142_AIC3_M1N1_SWIRQ_BASE) &&
+  (T8142_J813_AIC_LINE_ANS < T8142_AIC3_M1N1_SWIRQ_BASE) &&
+  (T8142_J813_AIC_LINE_USB < T8142_AIC3_M1N1_SWIRQ_BASE),
+  "an aliased physical line lands in m1n1's reserved timer SWIRQ block"
+  );
+
+STATIC_ASSERT (
+  T8142_AIC3_M1N1_SWIRQ_BASE == 2352 && T8142_AIC3_M1N1_SWIRQ_LIMIT == 2400,
+  "m1n1's reserved SWIRQ block moved; the AIC3 payload's nr_irq must agree"
+  );
+
+//
+// The AIC3 payload carries the CPU count in reserved[0] -- AIC3 has no
+// main_cpu_count field, and ntasi_aic_native_from_payload() rejects zero with
+// no diagnostic beyond a failed registration.  Ten, and it must equal what the
+// MADT enumerates.
+//
+STATIC_ASSERT (
+  T8142_J813_CPU_COUNT ==
+    T8142_J813_E_CORE_COUNT + T8142_J813_P_CORE_COUNT,
+  "CPU count disagrees with the per-cluster core counts"
+  );
+
+STATIC_ASSERT (
+  T8142_J813_CPU_COUNT == FixedPcdGet32 (PcdCoreCount),
+  "AIC3 payload CPU count disagrees with PcdCoreCount"
+  );
+
+//
+// Geometry invariants the Windows driver re-checks at registration, asserted
+// here so a bad edit fails the firmware build rather than the boot.
+//
+STATIC_ASSERT (
+  (T8142_AIC3_MAX_IRQ % 32) == 0 && T8142_AIC3_NR_IRQ <= T8142_AIC3_MAX_IRQ &&
+  T8142_AIC3_NR_DIE <= T8142_AIC3_MAX_DIE,
+  "AIC3 IRQ/die geometry is inconsistent"
+  );
+
+STATIC_ASSERT (
+  T8142_AIC3_EVENT_BASE ==
+    T8142_AIC3_CONTROLLER_BASE + T8142_AIC3_EVENT_OFFSET,
+  "EVENT base is not controller base + the ADT's aic-iack-offset"
+  );
+
+//
+// Bytes generated by drivers/AppleAic/emit_aic3_csrt.c "t8142-j813" and
+// transcribed verbatim; sha256
+// 23f7f62535d7f0fcc880f2c25a0ced210df6e730981593b82fd16bd7cb3b23e7.
+//
+// Layout: 36 header + 24 group + 12 descriptor + 144 AIC3 payload + 16 ALI2
+// tail header + 3 * 8 alias entries = 256.
+//
+UINT8  Csrt[] = {
+  //
+  // ACPI header.  "CSRT", length 0x00000100 = 256, revision 0, checksum 0x54,
+  // OEM ID "NTASI ", OEM table ID "T814AIC3" -- the table ID is the only field
+  // that says WHICH SoC's register map this describes, so it is not
+  // decorative; "T605AIC3" here would be a T6050 description shipped as an M5
+  // Air's.
+  //
+  0x43, 0x53, 0x52, 0x54, 0x00, 0x01, 0x00, 0x00,
+  0x00, 0x54, 0x4e, 0x54, 0x41, 0x53, 0x49, 0x20,
+  0x54, 0x38, 0x31, 0x34, 0x41, 0x49, 0x43, 0x33,
+  0x01, 0x00, 0x00, 0x00, 0x4e, 0x54, 0x41, 0x53,
+  0x01, 0x00, 0x00, 0x00,
+  //
+  // Resource group: length 0xdc = 220, vendor "APPL", subvendor "NTAS",
+  // DeviceId 0x0008, SubdeviceId 0x0001, revision 1, SharedInfoLength 0.
+  // Every one of these is a hard gate in the HAL extension -- a mismatch is
+  // STATUS_DEVICE_CONFIGURATION_ERROR before any MMIO is touched.
+  //
+  0xdc, 0x00, 0x00, 0x00,
+  0x41, 0x50, 0x50, 0x4c, 0x4e, 0x54, 0x41, 0x53,
+  0x08, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00,
+  //
+  // Resource descriptor: length 0xc4 = 196 (12 header + 144 payload + 40
+  // alias tail), type 1 (interrupt), subtype 1 (controller), UID 0.
+  //
+  0xc4, 0x00, 0x00, 0x00,
+  0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+  //
+  // AIC3 vendor payload, 144 bytes.  "AIC3", length 0x90, ABI 1.0,
+  // aic_version 3, flags 1 (VALUES_RESOLVED only -- fast IPI is unverified on
+  // this part and there is no AIC3 sibling to aic2_ipi.c, so claiming
+  // FAST_IPI/LOCAL_FAST_IPI would be an unfalsifiable assertion).
+  //
+  0x41, 0x49, 0x43, 0x33, 0x90, 0x00, 0x00, 0x00,
+  0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00,
+  0x01, 0x00, 0x00, 0x00,
+  // chip_id 0x00008142, board_id 0x00000024 (J813), reserved0 0.
+  0x42, 0x81, 0x00, 0x00,
+  0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  // controller_base 0x0000000381000000, controller_size 0x00000000001cc000.
+  0x00, 0x00, 0x00, 0x81, 0x03, 0x00, 0x00, 0x00,
+  0x00, 0xc0, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x00,
+  // event_base 0x0000000381040000, event_size 0x0000000000004000.
+  0x00, 0x00, 0x04, 0x81, 0x03, 0x00, 0x00, 0x00,
+  0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  // event_offset 0, cap0_offset 4, maxnumirq_offset 12, config_offset 0x10000.
+  0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
+  0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
+  // nr_irq 2400, max_irq 4096, nr_die 1, max_die 2.
+  0x60, 0x09, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
+  0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
+  //
+  // extintrcfg / intmaskset / intmaskclear / hwstate strides, all 0x4a00.
+  // THESE COME FROM THE ADT AND ARE NOT RECOMPUTED.  m1n1's aic23_init()
+  // derives a fallback of 0x4800 and the ADT overrides it; a table that
+  // recomputed would be 0x200 wrong per die -- invisible while nr_die == 1.
+  //
+  0x00, 0x4a, 0x00, 0x00, 0x00, 0x4a, 0x00, 0x00,
+  0x00, 0x4a, 0x00, 0x00, 0x00, 0x4a, 0x00, 0x00,
+  //
+  // aic_die_offset_stride and aic_soc_offset_stride, both 0.  Unmeasured on
+  // T8142 and deliberately not copied from T6050: no consumer reads either
+  // field, and with nr_die == 1 there is no die-to-die arithmetic to get
+  // wrong, so a plausible-looking non-zero value would be strictly worse than
+  // an honest zero.
+  //
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  //
+  // reserved[4].  reserved[0] IS THE CPU COUNT on AIC3 -- 10 here.  There is
+  // no main_cpu_count field in this ABI and the driver rejects zero, so a
+  // table that left reserved zeroed would fail registration silently.
+  //
+  0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  //
+  // ALI2 alias tail: signature "ALI2", version 1, reserved 0, count 3,
+  // reserved 0.  An older HAL, or one given a table without this tail, parses
+  // it as zero aliases and behaves identically to a table that never had one.
+  //
+  0x41, 0x4c, 0x49, 0x32, 0x01, 0x00, 0x00, 0x00,
+  0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  //
+  // 995 (0x3e3) -> 1277 (0x4fd): dockchannel-mtp, the built-in keyboard and
+  // trackpad.  Bit-identical to hv_aic_aliases_t8142[] in m1n1's
+  // src/hv_aic_alias.c, which must stay true for as long as both exist.
+  //
+  0xe3, 0x03, 0x00, 0x00, 0xfd, 0x04, 0x00, 0x00,
+  //
+  // 996 (0x3e4) -> 1155 (0x483): ans, the internal NVMe storage controller.
+  //
+  0xe4, 0x03, 0x00, 0x00, 0x83, 0x04, 0x00, 0x00,
+  //
+  // 997 (0x3e5) -> 1511 (0x5e7): usb-drd0, the LEFT Type-C port's xHCI host
+  // controller.  1511 is interrupts[0] of /arm-io/usb-drd0.  Only the left
+  // port is aliased -- usb-drd1 carries the debug proxy's own cable and m1n1
+  // removes it from the guest device tree.
+  //
+  0xe5, 0x03, 0x00, 0x00, 0xe7, 0x05, 0x00, 0x00,
+};
+
+STATIC_ASSERT (sizeof (Csrt) == 256, "T8142 J813 AIC3 CSRT size");
+
+//
+// Reference the table being generated to prevent the optimizer from removing
+// the data structure from the executable.
+//
+VOID  *CONST  ReferenceAcpiTable = &Csrt;

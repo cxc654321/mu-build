@@ -1,0 +1,68 @@
+## @file
+#  Borrowed from edk2-platforms/JunoPkg and AmpereAltraPkg, original header below.
+#  Copyright (c) 2023, amarioguy (AppleWOA authors)
+#  ACPI table data and ASL sources required to boot the platform.
+#
+#  Copyright (c) 2014-2017, ARM Ltd. All rights reserved.
+#
+#  Copyright (c) 2026 Aurora Silicon
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = CPUAcpiTables
+  #
+  # This FILE_GUID is NOT free to choose. AcpiPlatformDxe finds the SoC ACPI
+  # tables by scanning the firmware volumes for an FFS file whose GUID equals
+  # gAppleSiliconPkgTokenSpaceGuid.PcdSocAcpiTableStorageFile, whose default in
+  # AppleSiliconPkg.dec is exactly this value. T810X, T600X and T602X all use it
+  # for their CPUAcpiTables.inf too -- only one SoC package is ever in a given
+  # FDF, so there is no collision.
+  #
+  # This was originally created with a freshly generated GUID, which is normal
+  # practice for a new INF and wrong here. The tables were built into the FV and
+  # simply never found:
+  #
+  #   AcpiPlatformEntryPoint: Failed to locate SoC specific tables, status Not Found
+  #   ASSERT [AcpiPlatform] AcpiPlatform.c(580): ((BOOLEAN)(0==1))
+  #
+  FILE_GUID                      = d1430d86-24a4-4c2f-8f22-d24376e2e888
+  MODULE_TYPE                    = USER_DEFINED
+  VERSION_STRING                 = 1.0
+
+[Sources]
+  #
+  # CSRT.aslc describes the native AIC3 to Windows' HAL extension. It was a
+  # comment-only stub excluded from the build until the AIC3 table was
+  # measured; it now carries a real 248-byte table and must be listed here, or
+  # it compiles to nothing and the extension never loads.
+  #
+  CSRT.aslc
+  GTDT.aslc
+  MADT_Static.aslc
+  PPTT.aslc
+
+
+[Packages]
+  ArmPkg/ArmPkg.dec
+  ArmPlatformPkg/ArmPlatformPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+
+[FixedPcd]
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultCreatorId          ## CONSUMES
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultCreatorRevision    ## CONSUMES
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultOemId              ## CONSUMES
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultOemTableId         ## CONSUMES
+  gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultOemRevision        ## CONSUMES
+  gArmTokenSpaceGuid.PcdArmArchTimerSecIntrNum                    ## CONSUMES
+  gArmTokenSpaceGuid.PcdArmArchTimerIntrNum                       ## CONSUMES
+  gArmTokenSpaceGuid.PcdArmArchTimerHypIntrNum                    ## CONSUMES
+  gArmTokenSpaceGuid.PcdArmArchTimerVirtIntrNum                   ## CONSUMES
+  gAppleSiliconPkgTokenSpaceGuid.PcdCoreCount                     ## CONSUMES
+  gArmTokenSpaceGuid.PcdGicRedistributorsBase
+  gArmTokenSpaceGuid.PcdGicDistributorBase

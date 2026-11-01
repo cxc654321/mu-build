@@ -1,0 +1,318 @@
+/*
+ * Host-side, hardware-free regression test for the GPU preboot reservation
+ * safety invariants in
+ * Silicon/Apple/AppleSiliconPkg/Drivers/AcpiPlatformDxe/NtasiGpuReservationGuard.h.
+ *
+ * This file #includes that header directly (the exact same text compiled
+ * into AcpiPlatform.c under the EDK2/Clang AArch64 DXE toolchain -- moved
+ * there from PEI's MemoryInitPeiLib.c on 2026-07-30, see the header's own
+ * comment for why) and compiles standalone with a plain host C compiler --
+ * no EDK2, no cross-toolchain, no hardware, no proxy. Run it with:
+ *
+ *   cc -std=c99 -Wall -Wextra -o /tmp/test_gpu_reservation_guard \
+ *      Tests/test_gpu_reservation_guard.c && /tmp/test_gpu_reservation_guard
+ *
+ * or via Tests/test_gpu_reservation_guard.py, which does exactly that.
+ *
+ * The case in test_StackOverlap_2026_07_30_regression() reproduces the
+ * exact numbers from the 2026-07-30 hardware crash: a GPU "hw_data_a"
+ * reservation computed as [SystemMemoryTop - 0x8000, SystemMemoryTop) with
+ * SystemMemoryTop = 0x103db29c000 landed on the live PEI stack pointer
+ * (observed SP_EL1 = 0x103db29ba10) and crashed the machine before a
+ * vector table even existed. This test fails loudly if
+ * NtasiRangeContainsPoint() would ever fail to flag that exact
+ * computation again.
+ *
+ * Copyright (c) 2026 Aurora Silicon
+ * SPDX-License-Identifier: MIT
+ */
+
+#include <stddef.h>
+#include <stdio.h>
+
+#include "../Silicon/Apple/AppleSiliconPkg/Drivers/AcpiPlatformDxe/NtasiGpuReservationGuard.h"
+
+static int gFailures = 0;
+
+#define CHECK(description, condition)                                          \
+  do {                                                                          \
+    if (condition) {                                                           \
+      printf("PASS: %s\n", (description));                                     \
+    } else {                                                                   \
+      printf("FAIL: %s\n", (description));                                     \
+      gFailures++;                                                             \
+    }                                                                          \
+  } while (0)
+
+static void
+test_StackOverlap_2026_07_30_regression (void)
+{
+  /* Exact figures from the coordinator's hardware report. */
+  const NTASI_GUARD_U64 SystemMemoryTop = 0x103db29c000ULL;
+  const NTASI_GUARD_U64 LivePeiStackPointer = 0x103db29ba10ULL;
+
+  /* hw_data_a payload size 0x6C34 aligned up to 16 KiB = 0x8000. */
+  const NTASI_GUARD_U64 HwDataASize = 0x8000ULL;
+  const NTASI_GUARD_U64 HwDataABase = SystemMemoryTop - HwDataASize;
+
+  CHECK(
+    "2026-07-30 regression: the crashing hw_data_a range must be flagged as containing the live PEI stack pointer",
+    NtasiRangeContainsPoint(HwDataABase, HwDataASize, LivePeiStackPointer) == NTASI_GUARD_TRUE
+  );
+
+  /* hw_data_b and globals, stacked further down in the same bad scheme,
+   * should also be checked -- they happen to sit below the stack pointer
+   * in this particular reproduction, so the *point* check alone would not
+   * catch them, but the system-memory-window overlap check must. */
+  {
+    const NTASI_GUARD_U64 SystemMemoryBase = 0x1003e7f0000ULL;
+    const NTASI_GUARD_U64 HwDataBSize = 0x4000ULL;
+    const NTASI_GUARD_U64 HwDataBBase = HwDataABase - HwDataBSize;
+    const NTASI_GUARD_U64 GlobalsSize = 0x18000ULL;
+    const NTASI_GUARD_U64 GlobalsBase = HwDataBBase - GlobalsSize;
+    const NTASI_GUARD_U64 WindowSize = SystemMemoryTop - SystemMemoryBase;
+
+    CHECK(
+      "2026-07-30 regression: the crashing hw_data_b range must overlap Mu's system-memory window",
+      NtasiRangesOverlap(HwDataBBase, HwDataBSize, SystemMemoryBase, WindowSize) == NTASI_GUARD_TRUE
+    );
+    CHECK(
+      "2026-07-30 regression: the crashing globals range must overlap Mu's system-memory window",
+      NtasiRangesOverlap(GlobalsBase, GlobalsSize, SystemMemoryBase, WindowSize) == NTASI_GUARD_TRUE
+    );
+  }
+}
+
+static void
+test_ConfirmedGoodAdtCarveouts_2026_07_30 (void)
+{
+  /* Hardware-confirmed live /arm-io/sgx ADT values, all three byte-exact
+   * against the historical hardcoded constants. None of these may ever be
+   * flagged as unsafe, or the guard is too aggressive to ship. */
+  const NTASI_GUARD_U64 SystemMemoryBase = 0x1003e7f0000ULL;
+  const NTASI_GUARD_U64 SystemMemoryTop  = 0x103db29c000ULL;
+  const NTASI_GUARD_U64 WindowSize       = SystemMemoryTop - SystemMemoryBase;
+  const NTASI_GUARD_U64 LivePeiStackPointer = 0x103db29ba10ULL;
+
+  const struct {
+    const char       *Label;
+    NTASI_GUARD_U64  Base;
+    NTASI_GUARD_U64  Size;
+  } Carveouts[3] = {
+    { "uat_ttbs (gpu-region)",         0x103fffb8000ULL, 0x4000ULL  },
+    { "uat_pagetables (gfx-shared-region)", 0x103fff78000ULL, 0x40000ULL },
+    { "uat_handoff (gfx-handoff)",     0x103fff70000ULL, 0x4000ULL  },
+  };
+  size_t i;
+  char message[128];
+
+  for (i = 0; i < sizeof(Carveouts) / sizeof(Carveouts[0]); i++) {
+    snprintf(message, sizeof(message), "%s must not be flagged as containing the live PEI stack pointer", Carveouts[i].Label);
+    CHECK(message, NtasiRangeContainsPoint(Carveouts[i].Base, Carveouts[i].Size, LivePeiStackPointer) == NTASI_GUARD_FALSE);
+
+    snprintf(message, sizeof(message), "%s must not be flagged as overlapping Mu's system-memory window", Carveouts[i].Label);
+    CHECK(message, NtasiRangesOverlap(Carveouts[i].Base, Carveouts[i].Size, SystemMemoryBase, WindowSize) == NTASI_GUARD_FALSE);
+  }
+}
+
+static void
+test_RangeContainsPoint_EdgeCases (void)
+{
+  CHECK("zero-size range contains nothing", NtasiRangeContainsPoint(0x1000, 0, 0x1000) == NTASI_GUARD_FALSE);
+  CHECK("point exactly at base is contained", NtasiRangeContainsPoint(0x1000, 0x10, 0x1000) == NTASI_GUARD_TRUE);
+  CHECK("point exactly at last byte is contained", NtasiRangeContainsPoint(0x1000, 0x10, 0x100f) == NTASI_GUARD_TRUE);
+  CHECK("point one past the range is not contained", NtasiRangeContainsPoint(0x1000, 0x10, 0x1010) == NTASI_GUARD_FALSE);
+  CHECK("point one before the range is not contained", NtasiRangeContainsPoint(0x1000, 0x10, 0x0fff) == NTASI_GUARD_FALSE);
+  CHECK(
+    "a range that wraps the address space is treated as containing everything (fail closed)",
+    NtasiRangeContainsPoint(0xfffffffffffffff0ULL, 0x100, 0x1234) == NTASI_GUARD_TRUE
+  );
+}
+
+static void
+test_RangesOverlap_EdgeCases (void)
+{
+  CHECK("zero-size ranges never overlap", NtasiRangesOverlap(0x1000, 0, 0x1000, 0x10) == NTASI_GUARD_FALSE);
+  CHECK("identical ranges overlap", NtasiRangesOverlap(0x1000, 0x10, 0x1000, 0x10) == NTASI_GUARD_TRUE);
+  CHECK("adjacent-but-not-touching ranges do not overlap", NtasiRangesOverlap(0x1000, 0x10, 0x1010, 0x10) == NTASI_GUARD_FALSE);
+  CHECK("ranges sharing exactly one byte overlap", NtasiRangesOverlap(0x1000, 0x11, 0x1010, 0x10) == NTASI_GUARD_TRUE);
+  CHECK("a range straddling the top of a window overlaps it", NtasiRangesOverlap(0x1ff8, 0x10, 0x1000, 0x1000) == NTASI_GUARD_TRUE);
+  CHECK(
+    "a wrapping range is treated as overlapping everything (fail closed)",
+    NtasiRangesOverlap(0xfffffffffffffff0ULL, 0x100, 0x1000, 0x10) == NTASI_GUARD_TRUE
+  );
+}
+
+/*
+ * The bound the 2026-07-30 incident was actually missing. All figures are
+ * this machine's real ones:
+ *   boot_args phys_base       = 0x1003e7f0000  (PcdSystemMemoryBase)
+ *   boot_args mem_size top    = 0x103db29c000  (PcdSystemMemory{Base+Size})
+ *   ALIGN_DOWN(phys_base,4GiB)= 0x10000000000
+ *   mem_size_actual (16 GiB)  = 0x400000000
+ *   real DRAM top             = 0x10400000000
+ *
+ * The three UAT carveouts sit ABOVE boot_args' mem_size top but BELOW the
+ * real DRAM top, which is precisely why bounding them by SystemMemoryTop
+ * (as the original PEI reservation path effectively did, by trying to punch
+ * a hole in a SystemMemory HOB that does not cover them) was wrong, and why
+ * bounding them by the real DRAM top is right.
+ */
+static void
+test_PhysicalDramWindow_2026_07_30 (void)
+{
+  const NTASI_GUARD_U64 SystemMemoryBase = 0x1003e7f0000ULL;
+  const NTASI_GUARD_U64 SystemMemoryTop  = 0x103db29c000ULL;
+  const NTASI_GUARD_U64 DramWindowBase   = 0x10000000000ULL;
+  const NTASI_GUARD_U64 DramWindowTop    = 0x10400000000ULL;
+
+  const struct {
+    const char       *Label;
+    NTASI_GUARD_U64  Base;
+    NTASI_GUARD_U64  Size;
+  } Carveouts[3] = {
+    { "uat_ttbs (gpu-region)",              0x103fffb8000ULL, 0x4000ULL  },
+    { "uat_pagetables (gfx-shared-region)", 0x103fff78000ULL, 0x40000ULL },
+    { "uat_handoff (gfx-handoff)",          0x103fff70000ULL, 0x4000ULL  },
+  };
+  size_t i;
+  char message[160];
+
+  for (i = 0; i < sizeof(Carveouts) / sizeof(Carveouts[0]); i++) {
+    snprintf(message, sizeof(message), "%s must be inside the real DRAM window [0x10000000000, 0x10400000000)", Carveouts[i].Label);
+    CHECK(message, NtasiRangeWithinWindow(Carveouts[i].Base, Carveouts[i].Size, DramWindowBase, DramWindowTop) == NTASI_GUARD_TRUE);
+
+    /* And must NOT be inside Mu's own (smaller) window -- that is what makes
+     * the existing overlap check safe to keep as a hard refusal. */
+    snprintf(message, sizeof(message), "%s must sit above Mu's own boot_args mem_size window", Carveouts[i].Label);
+    CHECK(message, NtasiRangeWithinWindow(Carveouts[i].Base, Carveouts[i].Size, SystemMemoryBase, SystemMemoryTop) == NTASI_GUARD_FALSE);
+  }
+
+  /* An address one page past the real DRAM top -- the failure class the user
+   * called out ("sit ABOVE this machine's RAM ceiling") -- must be refused. */
+  CHECK(
+    "a carveout starting exactly at the real DRAM top is refused",
+    NtasiRangeWithinWindow(DramWindowTop, 0x4000ULL, DramWindowBase, DramWindowTop) == NTASI_GUARD_FALSE
+  );
+  CHECK(
+    "a carveout straddling the real DRAM top is refused",
+    NtasiRangeWithinWindow(DramWindowTop - 0x2000ULL, 0x4000ULL, DramWindowBase, DramWindowTop) == NTASI_GUARD_FALSE
+  );
+  CHECK(
+    "a carveout ending exactly at the real DRAM top is accepted",
+    NtasiRangeWithinWindow(DramWindowTop - 0x4000ULL, 0x4000ULL, DramWindowBase, DramWindowTop) == NTASI_GUARD_TRUE
+  );
+  CHECK(
+    "a carveout below the 4GiB-aligned DRAM floor is refused",
+    NtasiRangeWithinWindow(DramWindowBase - 0x4000ULL, 0x4000ULL, DramWindowBase, DramWindowTop) == NTASI_GUARD_FALSE
+  );
+}
+
+static void
+test_RangeWithinWindow_EdgeCases (void)
+{
+  CHECK("zero-size range is never within a window (fail closed)", NtasiRangeWithinWindow(0x1000, 0, 0x0, 0x10000) == NTASI_GUARD_FALSE);
+  CHECK("empty window contains nothing", NtasiRangeWithinWindow(0x1000, 0x10, 0x1000, 0x1000) == NTASI_GUARD_FALSE);
+  CHECK("inverted window contains nothing", NtasiRangeWithinWindow(0x1000, 0x10, 0x2000, 0x1000) == NTASI_GUARD_FALSE);
+  CHECK("range exactly filling the window is within it", NtasiRangeWithinWindow(0x1000, 0x1000, 0x1000, 0x2000) == NTASI_GUARD_TRUE);
+  CHECK("range one byte past the window top is not within it", NtasiRangeWithinWindow(0x1000, 0x1001, 0x1000, 0x2000) == NTASI_GUARD_FALSE);
+  CHECK("range one byte below the window base is not within it", NtasiRangeWithinWindow(0x0fff, 0x10, 0x1000, 0x2000) == NTASI_GUARD_FALSE);
+  CHECK(
+    "a range that wraps the address space is never within a window (fail closed)",
+    NtasiRangeWithinWindow(0xfffffffffffffff0ULL, 0x100, 0x0, 0xffffffffffffffffULL) == NTASI_GUARD_FALSE
+  );
+}
+
+static void
+test_CanonicalGpuHandoffGeometry (void)
+{
+  const NTASI_GUARD_U64 DramWindowTop = 0x10400000000ULL;
+  const NTASI_GUARD_U64 CanonicalBase = 0x103ffbdc000ULL;
+  const NTASI_GUARD_U64 HwDataABase   = CanonicalBase;
+  const NTASI_GUARD_U64 HwDataBBase   = HwDataABase + NTASI_GPU_HANDOFF_HWDATA_A_SIZE;
+  const NTASI_GUARD_U64 GlobalsBase   = HwDataBBase + NTASI_GPU_HANDOFF_HWDATA_B_SIZE;
+  NTASI_GUARD_U64       DerivedBase;
+
+  DerivedBase = 0;
+  CHECK(
+    "m1n1/Mu canonical AGX handoff base derives from the real J414s DRAM top",
+    NtasiGpuCanonicalHandoffBase(DramWindowTop, &DerivedBase) == NTASI_GUARD_TRUE &&
+    DerivedBase == CanonicalBase
+  );
+  CHECK(
+    "the exact contiguous 0x8000/0x4000/0x18000 m1n1 handoff is accepted",
+    NtasiGpuHandoffGeometryIsCanonical(
+      DramWindowTop,
+      HwDataABase, NTASI_GPU_HANDOFF_HWDATA_A_SIZE,
+      HwDataBBase, NTASI_GPU_HANDOFF_HWDATA_B_SIZE,
+      GlobalsBase, NTASI_GPU_HANDOFF_GLOBALS_SIZE
+      ) == NTASI_GUARD_TRUE
+  );
+  CHECK(
+    "a stale handoff base one 16 KiB page away is refused",
+    NtasiGpuHandoffGeometryIsCanonical(
+      DramWindowTop,
+      HwDataABase - NTASI_GPU_HANDOFF_PAGE_SIZE, NTASI_GPU_HANDOFF_HWDATA_A_SIZE,
+      HwDataBBase - NTASI_GPU_HANDOFF_PAGE_SIZE, NTASI_GPU_HANDOFF_HWDATA_B_SIZE,
+      GlobalsBase - NTASI_GPU_HANDOFF_PAGE_SIZE, NTASI_GPU_HANDOFF_GLOBALS_SIZE
+      ) == NTASI_GUARD_FALSE
+  );
+  CHECK(
+    "a non-contiguous hw_data_b aperture is refused",
+    NtasiGpuHandoffGeometryIsCanonical(
+      DramWindowTop,
+      HwDataABase, NTASI_GPU_HANDOFF_HWDATA_A_SIZE,
+      HwDataBBase + NTASI_GPU_HANDOFF_PAGE_SIZE, NTASI_GPU_HANDOFF_HWDATA_B_SIZE,
+      GlobalsBase, NTASI_GPU_HANDOFF_GLOBALS_SIZE
+      ) == NTASI_GUARD_FALSE
+  );
+  CHECK(
+    "a wrong globals map size is refused",
+    NtasiGpuHandoffGeometryIsCanonical(
+      DramWindowTop,
+      HwDataABase, NTASI_GPU_HANDOFF_HWDATA_A_SIZE,
+      HwDataBBase, NTASI_GPU_HANDOFF_HWDATA_B_SIZE,
+      GlobalsBase, NTASI_GPU_HANDOFF_GLOBALS_SIZE - NTASI_GPU_HANDOFF_PAGE_SIZE
+      ) == NTASI_GUARD_FALSE
+  );
+  CHECK(
+    "an unaligned handoff is refused",
+    NtasiGpuHandoffGeometryIsCanonical(
+      DramWindowTop,
+      HwDataABase + 1, NTASI_GPU_HANDOFF_HWDATA_A_SIZE,
+      HwDataBBase + 1, NTASI_GPU_HANDOFF_HWDATA_B_SIZE,
+      GlobalsBase + 1, NTASI_GPU_HANDOFF_GLOBALS_SIZE
+      ) == NTASI_GUARD_FALSE
+  );
+  CHECK(
+    "a DRAM top too small for the firmware margin and handoff is refused",
+    NtasiGpuCanonicalHandoffBase(
+      NTASI_GPU_HANDOFF_TOP_MARGIN + NTASI_GPU_HANDOFF_RESERVATION_SIZE,
+      &DerivedBase
+      ) == NTASI_GUARD_FALSE
+  );
+  CHECK(
+    "a null canonical-base output is refused",
+    NtasiGpuCanonicalHandoffBase(DramWindowTop, NULL) == NTASI_GUARD_FALSE
+  );
+}
+
+int
+main (void)
+{
+  test_StackOverlap_2026_07_30_regression();
+  test_ConfirmedGoodAdtCarveouts_2026_07_30();
+  test_PhysicalDramWindow_2026_07_30();
+  test_RangeContainsPoint_EdgeCases();
+  test_RangesOverlap_EdgeCases();
+  test_RangeWithinWindow_EdgeCases();
+  test_CanonicalGpuHandoffGeometry();
+
+  if (gFailures != 0) {
+    printf("\n%d assertion(s) FAILED\n", gFailures);
+    return 1;
+  }
+
+  printf("\nall assertions passed\n");
+  return 0;
+}
