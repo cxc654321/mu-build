@@ -191,6 +191,27 @@ FbScroll (
   mFb.CurY = mFb.Rows - 1;
 }
 
+/**
+  Flush one character row: the whole band the glyph sits in.
+
+  Flushing per glyph would write back a full-band span per character; on a
+  2560 x 1600 panel that is hundreds of kilobytes for sixteen pixels of text,
+  and the dispatch log is thousands of characters long. Once per text row is
+  enough because each row is drawn left to right before the next begins.
+**/
+STATIC
+VOID
+FbFlushRow (
+  IN UINTN  Row
+  )
+{
+  if (!mFb.Ready) {
+    return;
+  }
+
+  FbFlush (Row * FB_CELL_H * mFb.StridePx * 4, FB_CELL_H * mFb.StridePx * 4);
+}
+
 STATIC
 VOID
 FbDrawGlyph (
@@ -232,7 +253,6 @@ FbDrawGlyph (
     }
   }
 
-  FbFlush (OriginY * mFb.StridePx * 4, FB_CELL_H * mFb.StridePx * 4);
 }
 
 STATIC
@@ -250,6 +270,7 @@ FbPutChar (
   }
 
   if (Ch == '\n') {
+    FbFlushRow (mFb.CurY);
     mFb.CurX = 0;
     mFb.CurY++;
     if (mFb.CurY >= mFb.Rows) {
@@ -266,6 +287,7 @@ FbPutChar (
   FbDrawGlyph (Ch);
   mFb.CurX++;
   if (mFb.CurX >= mFb.Cols) {
+    FbFlushRow (mFb.CurY);
     mFb.CurX = 0;
     mFb.CurY++;
     if (mFb.CurY >= mFb.Rows) {
