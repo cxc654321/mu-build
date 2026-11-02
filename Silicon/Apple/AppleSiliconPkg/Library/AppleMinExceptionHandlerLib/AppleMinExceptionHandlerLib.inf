@@ -18,6 +18,11 @@
 [Packages]
   MdePkg/MdePkg.dec
 
+[Guids]
+  gEfiDebugImageInfoTableGuid
+
 [LibraryClasses]
   BaseLib
   DebugLib
+  PeCoffGetEntryPointLib
+  UefiLib
