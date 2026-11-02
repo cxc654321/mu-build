@@ -51,6 +51,25 @@
   *_CLANGPDB_AARCH64_CC_FLAGS = -Wno-ignored-pragma-optimize
 
 [PcdsFixedAtBuild.common]
+  #
+  # Internal storage, which BDS can then enumerate.
+  #
+  # AppleNANDStorageDxe is already in the FV on this platform
+  # (PLATFORM_NAND_SLOT = EARLY) and its depex is TRUE, but both switches in
+  # front of it defaulted to FALSE: it ran discovery, printed its PMGR/SART
+  # report, and deliberately published no Block I/O, so the boot manager had
+  # nothing to look at.
+  #
+  # The 'storage' shorthand in Platform/Features.py does not reach this
+  # platform -- BLD_*_NTASI_ANS_* are only mapped by the T6020-era DSCs. These
+  # are the PCDs the driver actually reads.
+  #
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishBlockIo|TRUE
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPerformDxeBringUp|TRUE
+  # Left FALSE on purpose: warm handoff is only for a build that boots Windows
+  # from internal storage. BDS enumeration does not need it.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPreserveForOs|FALSE
+
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModel|"MacBook Air (Mid 2020)"
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModelNumber|"MacBookAir10,1"
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemSku|"MacBook Air (MacBookAir10,1)"
