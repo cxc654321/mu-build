@@ -20,9 +20,12 @@
 
 #include <Uefi.h>
 
+#include <Guid/DebugImageInfoTable.h>
+
 #include <Library/BaseLib.h>
 #include <Library/DebugLib.h>
 #include <Library/HobLib.h>
+#include <Library/PeCoffGetEntryPointLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 
 #include <Pi/PiHob.h>
@@ -238,6 +241,100 @@ PointSpEl0AtOurStack (
     ));
 }
 
+/**
+  Dump every loaded image, by name, at ReadyToBoot.
+
+  "Which module is actually in the machine" kept being answered by guesswork:
+  a module can be packaged in the FV and still never be dispatched (depex,
+  MODULE_TYPE, order), and per-module DEBUG lines are only as reliable as the
+  patch that inserted them. The DXE debug image table is maintained by the core
+  itself, so this is the ground truth: base, size and PDB file name for every
+  image that was loaded, taken as late as possible before the boot manager runs.
+**/
+STATIC
+VOID
+EFIAPI
+OnReadyToBoot (
+  IN EFI_EVENT  Event,
+  IN VOID       *Context
+  )
+{
+  EFI_STATUS                         Status;
+  EFI_DEBUG_IMAGE_INFO_TABLE_HEADER  *Header;
+  EFI_DEBUG_IMAGE_INFO               *Entry;
+  EFI_LOADED_IMAGE_PROTOCOL          *Image;
+  UINTN                              Index;
+  UINTN                              Loaded;
+  CHAR8                              *Pdb;
+  CHAR8                              *Name;
+  UINTN                              Length;
+
+  Header = NULL;
+  Status = EfiGetSystemConfigurationTable (&gEfiDebugImageInfoTableGuid, (VOID **)&Header);
+  if (EFI_ERROR (Status) || (Header == NULL) || (Header->EfiDebugImageInfoTable == NULL)) {
+    DEBUG ((DEBUG_ERROR, "LOADED: no debug image table\n"));
+    return;
+  }
+
+  Loaded = 0;
+  DEBUG ((DEBUG_ERROR, "LOADED: dumping %d debug image slots\n", (UINT32)Header->TableSize));
+
+  for (Index = 0; Index < Header->TableSize; Index++) {
+    Entry = &Header->EfiDebugImageInfoTable[Index];
+    if ((Entry->NormalImage == NULL) || (Entry->NormalImage->LoadedImageProtocolInstance == NULL)) {
+      continue;
+    }
+
+    Image = Entry->NormalImage->LoadedImageProtocolInstance;
+    Pdb   = NULL;
+
+    if (*(UINT16 *)(UINTN)Image->ImageBase == 0x5A4D) {
+      Pdb = PeCoffLoaderGetPdbPointer (Image->ImageBase);
+    }
+
+    Name = Pdb;
+    if (Name != NULL) {
+      CHAR8  *Walk;
+
+      for (Walk = Name; *Walk != 0; Walk++) {
+        if ((*Walk == '\\') || (*Walk == '/')) {
+          Name = Walk + 1;
+        }
+      }
+    }
+
+    Length = 0;
+    if (Name != NULL) {
+      while ((Name[Length] != 0) && (Length < 40)) {
+        Length++;
+      }
+    }
+
+    if (Length > 0) {
+      DEBUG ((
+        DEBUG_ERROR,
+        "LOADED: %a base 0x%lx size 0x%lx\n",
+        Name,
+        (UINT64)(UINTN)Image->ImageBase,
+        (UINT64)Image->ImageSize
+        ));
+    } else {
+      DEBUG ((
+        DEBUG_ERROR,
+        "LOADED: (unnamed) base 0x%lx size 0x%lx\n",
+        (UINT64)(UINTN)Image->ImageBase,
+        (UINT64)Image->ImageSize
+        ));
+    }
+
+    Loaded++;
+  }
+
+  DEBUG ((DEBUG_ERROR, "LOADED: %d images\n", (UINT32)Loaded));
+  (VOID)Event;
+  (VOID)Context;
+}
+
 EFI_STATUS
 EFIAPI
 J313MemMapDxeInitialize (
@@ -245,8 +342,31 @@ J313MemMapDxeInitialize (
   IN EFI_SYSTEM_TABLE  *SystemTable
   )
 {
+  EFI_STATUS  Status;
+
   PointSpEl0AtOurStack ();
   ReportMemoryMap ();
   ReportMemoryHobs ();
+
+  //
+  // Register late, when BDS has loaded everything it is going to load.
+  //
+  {
+    EFI_EVENT  Event;
+
+    Event  = NULL;
+    Status = gBS->CreateEventEx (
+                    EVT_NOTIFY_SIGNAL,
+                    TPL_CALLBACK,
+                    OnReadyToBoot,
+                    NULL,
+                    &gEfiEventReadyToBootGuid,
+                    &Event
+                    );
+    if (EFI_ERROR (Status)) {
+      DEBUG ((DEBUG_ERROR, "LOADED: cannot register ReadyToBoot (%r)\n", Status));
+    }
+  }
+
   return EFI_SUCCESS;
 }

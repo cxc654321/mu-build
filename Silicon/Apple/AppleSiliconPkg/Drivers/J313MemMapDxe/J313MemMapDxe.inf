@@ -19,12 +19,18 @@
 [Packages]
   MdePkg/MdePkg.dec
 
+[Guids]
+  gEfiDebugImageInfoTableGuid
+  gEfiEventReadyToBootGuid
+
 [LibraryClasses]
   BaseLib
   DebugLib
   HobLib
+  PeCoffGetEntryPointLib
   UefiBootServicesTableLib
   UefiDriverEntryPoint
+  UefiLib
 
 [Depex]
   TRUE
