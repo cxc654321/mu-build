@@ -150,7 +150,11 @@ ReportMemoryHobs (
     ));
 
   Count = 0;
-  Hob   = GET_NEXT_HOB (&Handoff->Header);
+  //
+  // Plain pointer arithmetic: GET_NEXT_HOB() takes the address of its argument,
+  // so it needs an lvalue -- &Handoff->Header is not one.
+  //
+  Hob = (EFI_HOB_GENERIC_HEADER *)((UINT8 *)Handoff + Handoff->Header.HeaderLength);
   while (!END_OF_HOB_LIST (Hob)) {
     if (Hob->HobType == EFI_HOB_TYPE_RESOURCE_DESCRIPTOR) {
       EFI_HOB_RESOURCE_DESCRIPTOR  *Resource;
