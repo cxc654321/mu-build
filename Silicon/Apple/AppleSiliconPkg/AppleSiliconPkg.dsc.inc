@@ -104,7 +104,9 @@
   gEfiMdeModulePkgTokenSpaceGuid.PcdPciDisableBusEnumeration|FALSE
 
   #Debugger control
-  DebuggerFeaturePkgTokenSpaceGuid.PcdForceEnableDebugger|FALSE
+  # PcdForceEnableDebugger is gone with the DebugAgentLib switch to the null
+  # agent (below); keeping it would make the DSC reference a package nothing in
+  # the FV depends on any more, which BaseTools rejects (error F001).
 
 
 [PcdsDynamicDefault.common]
