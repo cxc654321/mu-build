@@ -64,10 +64,19 @@
   # platform -- BLD_*_NTASI_ANS_* are only mapped by the T6020-era DSCs. These
   # are the PCDs the driver actually reads.
   #
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishBlockIo|TRUE
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPerformDxeBringUp|TRUE
-  # Left FALSE on purpose: warm handoff is only for a build that boots Windows
-  # from internal storage. BDS enumeration does not need it.
+  #
+  # Back to FALSE for the crash bisect.
+  #
+  # With the ACPI ASSERTs removed the boot finally reaches code past
+  # AcpiPlatformDxe, and takes a synchronous exception at 0x9DDD76208. ANS
+  # bring-up is the most invasive thing that code does -- it starts a
+  # coprocessor, retargets SART and touches the NVMe registers -- so it is the
+  # first variable to take back out. The three switches are the driver's own
+  # enable bits; leaving them FALSE restores "discovery and report only", which
+  # is what every earlier round ran.
+  #
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishBlockIo|FALSE
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPerformDxeBringUp|FALSE
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPreserveForOs|FALSE
 
   # The log photo came out mirror-imaged: this panel's scanout runs the other
