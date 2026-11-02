@@ -52,6 +52,36 @@
 
 [PcdsFixedAtBuild.common]
   #
+  # Memory type information, in pages, as EFI_MEMORY_TYPE_INFORMATION entries
+  # terminated by EfiMaxMemoryType. Order is by type index:
+  #
+  #   00 EfiReservedMemoryType          0
+  #   05 EfiRuntimeServicesCode       780   (0x30C)
+  #   06 EfiRuntimeServicesData       160   (0xA0)
+  #   09 EfiACPIReclaimMemory           5
+  #   0A EfiACPIMemoryNVS               0
+  #   0E EfiMaxMemoryType               0  <- terminator
+  #
+  # These are the "Next" column BDS printed for this machine. The comparison
+  # table read prev 0 / 0x12C / 0x96 for 09 / 06 / 05 and wanted 5 / 0xA0 /
+  # 0x30C, so every boot decided the settings had changed and asked for a warm
+  # reset -- which this platform cannot perform (no PSCI monitor), which is what
+  # killed the boot inside ResetSystemRuntimeDxe.
+  #
+  # It cannot converge on its own: PcdEmuVariableNvModeEnable is TRUE here, so
+  # gEfiMemoryTypeInformationGuid never survives a reboot and the comparison
+  # always starts from the PCD again. Seeding the PCD with the values BDS would
+  # compute breaks the loop at the first comparison instead of the second boot.
+  #
+  gEfiMdeModulePkgTokenSpaceGuid.PcdMemoryTypeInformation|{
+    0x00, 0x00, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,   # 00 Reserved,            0 pages
+    0x05, 0x00, 0x00, 0x00,  0x0C, 0x03, 0x00, 0x00,   # 05 RuntimeServicesCode, 780 pages
+    0x06, 0x00, 0x00, 0x00,  0xA0, 0x00, 0x00, 0x00,   # 06 RuntimeServicesData, 160 pages
+    0x09, 0x00, 0x00, 0x00,  0x05, 0x00, 0x00, 0x00,   # 09 ACPIReclaimMemory,    5 pages
+    0x0A, 0x00, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,   # 0A ACPIMemoryNVS,        0 pages
+    0x0E, 0x00, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00    # 0E EfiMaxMemoryType, terminator
+  }
+  #
   # Internal storage, which BDS can then enumerate.
   #
   # AppleNANDStorageDxe is already in the FV on this platform
