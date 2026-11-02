@@ -72,6 +72,63 @@ STATIC struct {
   BOOLEAN            Mirror;
 } mFb = { 0 };
 
+//
+/// A horizontally flipped copy of the console font, built once at first use.
+///
+/// This panel shows the framebuffer mirror-imaged, and the console font in
+/// MdeModulePkg is stored with bit 0 as the leftmost pixel of the cell. Rather
+/// than reason about which correction belongs where any further, the glyphs
+/// themselves are reversed: each byte of GlyphCol1 is bit-reversed, which swaps
+/// column 0 with column 7 inside the cell and leaves every other assumption
+/// untouched. Derived at runtime so the 95-glyph table cannot be mistyped.
+///
+STATIC APPLE_FB_GLYPH  mGlyphs[0x7F - 0x20];
+STATIC BOOLEAN         mFontReady = FALSE;
+
+STATIC
+UINT8
+FbReverseByte (
+  IN UINT8  Value
+  )
+{
+  UINT8  Out;
+  UINTN  Bit;
+
+  Out = 0;
+  for (Bit = 0; Bit < 8; Bit++) {
+    if ((Value & (1u << Bit)) != 0) {
+      Out |= (UINT8)(1u << (7 - Bit));
+    }
+  }
+
+  return Out;
+}
+
+STATIC
+VOID
+FbFlipFont (
+  VOID
+  )
+{
+  UINTN  Index;
+  UINTN  Row;
+
+  if (mFontReady) {
+    return;
+  }
+
+  for (Index = 0; Index < ARRAY_SIZE (mGlyphs); Index++) {
+    mGlyphs[Index].UnicodeWeight = mAppleFbGlyphs[Index].UnicodeWeight;
+    mGlyphs[Index].Attributes    = mAppleFbGlyphs[Index].Attributes;
+    for (Row = 0; Row < APPLE_FB_GLYPH_H; Row++) {
+      mGlyphs[Index].GlyphCol1[Row] =
+        FbReverseByte (mAppleFbGlyphs[Index].GlyphCol1[Row]);
+    }
+  }
+
+  mFontReady = TRUE;
+}
+
 #define FB_CELL_W  (APPLE_FB_GLYPH_W * mFb.Scale)
 #define FB_CELL_H  (APPLE_FB_GLYPH_H * mFb.Scale)
 
@@ -157,89 +214,6 @@ FbPixel (
     row 3: mirror on,  font normal
     row 4: mirror on,  font flipped
 **/
-STATIC
-VOID
-FbBigGlyph (
-  IN CHAR8    Ch,
-  IN UINTN    OriginX,
-  IN UINTN    OriginY,
-  IN UINTN    Scale,
-  IN BOOLEAN  Mirror,
-  IN BOOLEAN  FlipFont
-  )
-{
-  CONST APPLE_FB_GLYPH  *Glyph;
-  UINTN                 Col;
-  UINTN                 Row;
-  UINTN                 Px;
-  UINTN                 Py;
-  UINT32                Bits;
-  BOOLEAN               Saved;
-
-  if (!mFb.Ready) {
-    return;
-  }
-
-  if (((UINT8)Ch < 0x20) || ((UINT8)Ch > 0x7E)) {
-    Ch = 'F';
-  }
-
-  Glyph = &mAppleFbGlyphs[(UINT8)Ch - 0x20];
-  Saved = mFb.Mirror;
-  mFb.Mirror = Mirror;
-
-  for (Col = 0; Col < APPLE_FB_GLYPH_W; Col++) {
-    for (Row = 0; Row < APPLE_FB_GLYPH_H; Row++) {
-      Bits = Glyph->GlyphCol1[Row];
-      if (((Bits >> (FlipFont ? (APPLE_FB_GLYPH_W - 1 - Col) : Col)) & 1) == 0) {
-        continue;
-      }
-
-      for (Px = 0; Px < Scale; Px++) {
-        for (Py = 0; Py < Scale; Py++) {
-          UINTN  X = OriginX + Col * Scale + Px;
-          UINTN  Y = OriginY + Row * Scale + Py;
-
-          if ((X < mFb.Width) && (Y < mFb.Height)) {
-            FbPixel (X, Y, 0xFFFFFFFFu);
-          }
-        }
-      }
-    }
-  }
-
-  mFb.Mirror = Saved;
-  if ((OriginY < mFb.Height) && (OriginX < mFb.Width)) {
-    FbFlush (OriginY * mFb.StridePx * 4, ((APPLE_FB_GLYPH_H * Scale * mFb.StridePx) * 4));
-  }
-}
-
-STATIC
-VOID
-FbCalibrationSheet (
-  VOID
-  )
-{
-  UINTN  Scale;
-  UINTN  Step;
-
-  if (!mFb.Ready) {
-    return;
-  }
-
-  Scale = mFb.Height / 120;
-  if (Scale < 3) {
-    Scale = 3;
-  }
-
-  Step = APPLE_FB_GLYPH_H * Scale + Scale * 4;
-
-  FbBigGlyph ('F', mFb.Width / 8, Step * 0, Scale, FALSE, FALSE);
-  FbBigGlyph ('F', mFb.Width / 8, Step * 1, Scale, FALSE, TRUE);
-  FbBigGlyph ('F', mFb.Width / 8, Step * 2, Scale, TRUE,  FALSE);
-  FbBigGlyph ('F', mFb.Width / 8, Step * 3, Scale, TRUE,  TRUE);
-}
-
 STATIC
 VOID
 FbProbe (
@@ -331,10 +305,7 @@ FbProbe (
   FbPutChar ('\n');
   FbGoto (0);
   FbPuts ("A-LEFT\n");
-  FbPuts ("CALIBRATION: FOUR F GLYPHS, ROWS 1-4 = M0F0 M0F1 M1F0 M1F1\n");
-  FbPuts ("TELL ME WHICH ROW IS UPRIGHT\n");
-
-  FbCalibrationSheet ();
+  FbPuts ("GLYPHS HORIZONTALLY FLIPPED\n");
 }
 
 STATIC
@@ -407,7 +378,8 @@ FbDrawGlyph (
     Ch = '?';
   }
 
-  Glyph   = &mAppleFbGlyphs[(UINT8)Ch - 0x20];
+  FbFlipFont ();
+  Glyph   = &mGlyphs[(UINT8)Ch - 0x20];
   OriginX = mFb.CurX * FB_CELL_W;
   OriginY = mFb.CurY * FB_CELL_H;
 
