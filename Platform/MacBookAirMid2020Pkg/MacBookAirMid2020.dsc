@@ -79,9 +79,22 @@
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPerformDxeBringUp|FALSE
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPreserveForOs|FALSE
 
-  # The log photo came out mirror-imaged: this panel's scanout runs the other
-  # way. AppleFbDebugLib compensates when this is TRUE.
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleFbDebugMirrorX|TRUE
+  #
+  # FALSE. The panel does not mirror; AppleFbDebugLib was the one drawing
+  # backwards.
+  #
+  # The evidence is the exception dump being half readable and half not: its
+  # header line ("Synchronous Exception at 0x...") is written through
+  # ConSplitter -> GraphicsConsoleDxe -> GOP -> SimpleFbDxe and came out
+  # readable, while the register dump below it -- same handler,
+  # ArmPkg/DefaultExceptionHandlerLib -- goes out through DEBUG() and came out
+  # reversed. Same screen, two renderers, opposite result: the compensation in
+  # this library is what put it backwards.
+  #
+  # So ConOut is the reference and DebugLib has to match it, not the other way
+  # round. No GOP-side change is needed.
+  #
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleFbDebugMirrorX|FALSE
 
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModel|"MacBook Air (Mid 2020)"
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModelNumber|"MacBookAir10,1"
