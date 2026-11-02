@@ -253,6 +253,106 @@ PointSpEl0AtOurStack (
   image that was loaded, taken as late as possible before the boot manager runs.
 **/
 STATIC
+BOOLEAN
+NameHas (
+  IN CONST CHAR8  *Name,
+  IN CONST CHAR8  *Needle
+  )
+{
+  UINTN  i;
+  UINTN  j;
+
+  if ((Name == NULL) || (Needle == NULL)) {
+    return FALSE;
+  }
+
+  for (i = 0; Name[i] != 0; i++) {
+    for (j = 0; Needle[j] != 0; j++) {
+      if (Name[i + j] != Needle[j]) {
+        break;
+      }
+    }
+
+    if (Needle[j] == 0) {
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+/**
+  Which of the six UI modules are loaded, as six bits.
+
+  Walks the debug image table again rather than remembering names from the
+  dump loop, so the answer cannot drift from what was printed.
+**/
+STATIC
+UINTN
+ChainPresence (
+  VOID
+  )
+{
+  EFI_STATUS                         Status;
+  EFI_DEBUG_IMAGE_INFO_TABLE_HEADER  *Header;
+  EFI_DEBUG_IMAGE_INFO               *Entry;
+  EFI_LOADED_IMAGE_PROTOCOL          *Image;
+  UINTN                              Index;
+  UINTN                              Bits;
+  CHAR8                              *Pdb;
+
+  Bits   = 0;
+  Header = NULL;
+  Status = EfiGetSystemConfigurationTable (&gEfiDebugImageInfoTableGuid, (VOID **)&Header);
+  if (EFI_ERROR (Status) || (Header == NULL) || (Header->EfiDebugImageInfoTable == NULL)) {
+    return 0;
+  }
+
+  for (Index = 0; Index < Header->TableSize; Index++) {
+    Entry = &Header->EfiDebugImageInfoTable[Index];
+    if ((Entry->NormalImage == NULL) || (Entry->NormalImage->LoadedImageProtocolInstance == NULL)) {
+      continue;
+    }
+
+    Image = Entry->NormalImage->LoadedImageProtocolInstance;
+    Pdb   = NULL;
+    if (*(UINT16 *)(UINTN)Image->ImageBase == 0x5A4D) {
+      Pdb = PeCoffLoaderGetPdbPointer (Image->ImageBase);
+    }
+
+    if (Pdb == NULL) {
+      continue;
+    }
+
+    if (NameHas (Pdb, "RenderingEngine")) {
+      Bits |= BIT0;
+    }
+
+    if (NameHas (Pdb, "SimpleWindowManager")) {
+      Bits |= BIT1;
+    }
+
+    if (NameHas (Pdb, "OnScreenKeyboard")) {
+      Bits |= BIT2;
+    }
+
+    if (NameHas (Pdb, "MsUiTheme")) {
+      Bits |= BIT3;
+    }
+
+    if (NameHas (Pdb, "DisplayEngine")) {
+      Bits |= BIT4;
+    }
+
+    if (NameHas (Pdb, "FrontPage")) {
+      Bits |= BIT5;
+    }
+  }
+
+  return Bits;
+}
+
+STATIC
 VOID
 EFIAPI
 OnReadyToBoot (
@@ -278,6 +378,11 @@ OnReadyToBoot (
   }
 
   Loaded = 0;
+  //
+  // Give the operator time to point a camera at the panel before the list
+  // scrolls away, and hold it afterwards.
+  //
+  gBS->Stall (3 * 1000 * 1000);
   DEBUG ((DEBUG_ERROR, "LOADED: dumping %d debug image slots\n", (UINT32)Header->TableSize));
 
   for (Index = 0; Index < Header->TableSize; Index++) {
@@ -332,6 +437,23 @@ OnReadyToBoot (
   }
 
   DEBUG ((DEBUG_ERROR, "LOADED: %d images\n", (UINT32)Loaded));
+
+  //
+  // One line that answers the whole question, because the per-image lines above
+  // have scrolled the screen several times over by now.
+  //
+  {
+    UINTN  Chain;
+
+    Chain = ChainPresence ();
+    DEBUG ((DEBUG_ERROR, "UI CHAIN: SRE=%d SWM=%d OSK=%d THEME=%d DE=%d FP=%d\n",
+            (Chain & BIT0) ? 1 : 0, (Chain & BIT1) ? 1 : 0, (Chain & BIT2) ? 1 : 0,
+            (Chain & BIT3) ? 1 : 0, (Chain & BIT4) ? 1 : 0, (Chain & BIT5) ? 1 : 0));
+  }
+
+  DEBUG ((DEBUG_ERROR, "HOLDING 15s FOR THE CAMERA\n"));
+  gBS->Stall (15 * 1000 * 1000);
+
   (VOID)Event;
   (VOID)Context;
 }
