@@ -4489,6 +4489,8 @@ AcpiDumpFvSearch (
   EFI_FV_FILE_ATTRIBUTES         Attributes;
   UINT32                         FvStatus;
   UINTN                          Size;
+  EFI_FV_FILETYPE                FileType;
+  VOID                           *FileBuffer;
 
   Handles = NULL;
   Count   = 0;
@@ -4524,15 +4526,24 @@ AcpiDumpFvSearch (
     Attributes = 0;
     FvStatus   = 0;
     Size       = 0;
-    Status     = Fv->GetFileAttributes (Fv, Guid, &Attributes, &Size, &FvStatus);
+    FileType   = (EFI_FV_FILETYPE)0;
+    FileBuffer = NULL;
+    //
+    // ReadFile rather than GetFileAttributes: this tree's
+    // EFI_FIRMWARE_VOLUME2_PROTOCOL predates that member.
+    //
+    Status = Fv->ReadFile (Fv, Guid, &FileBuffer, &Size, &FileType, &Attributes, &FvStatus);
     DEBUG ((
       DEBUG_ERROR,
-      "ACPI:   FV[%d] attrs 0x%x size 0x%x -> %r\n",
+      "ACPI:   FV[%d] type 0x%x size 0x%x -> %r\n",
       (UINT32)Index,
-      (UINT32)Attributes,
+      (UINT32)FileType,
       (UINT32)Size,
       Status
       ));
+    if (!EFI_ERROR (Status) && (FileBuffer != NULL)) {
+      FreePool (FileBuffer);
+    }
   }
 
   FreePool (Handles);
