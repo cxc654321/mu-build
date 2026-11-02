@@ -41,7 +41,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: false
+          # Recursive, not stuart_setup's nested init: Silicon/ARM/TIANO and
+          # MU_BASECORE carry nested gitlinks (ArmPkg, brotli, libspdm ...).
+          # One run with an empty nested ArmPkg made BaseTools report
+          # "Invalid file path: ArmPkg/Library/ArmMmuLib/ArmMmuBaseLib.inf"
+          # and the OverrideValidation plugin then died on a None path.
+          submodules: recursive
           fetch-depth: 1
 
       - name: Install system dependencies
