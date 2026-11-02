@@ -62,6 +62,9 @@ jobs:
           source venv/bin/activate
           python -m pip install --upgrade pip
           pip install --upgrade -r pip-requirements.txt
+          # edk2-pytool-extensions still imports pkg_resources, removed in
+          # setuptools 81. Same pin Tools/mu-build applies natively.
+          pip install --disable-pip-version-check 'setuptools<81'
           command -v stuart_build
 
       - name: Export toolchain environment
