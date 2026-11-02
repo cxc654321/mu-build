@@ -137,6 +137,11 @@ jobs:
               print("pattern not found; ArmExceptionLib unchanged")
           PY
 
+      - name: Instrument the UI chain
+        # One boot should say which link of GOP -> SRE -> SWM -> OSK -> THEME
+        # -> FrontPage is missing. See Tools/ui-trace.py.
+        run: python3 Tools/ui-trace.py
+
       - name: stuart_build
         id: build
         continue-on-error: true
