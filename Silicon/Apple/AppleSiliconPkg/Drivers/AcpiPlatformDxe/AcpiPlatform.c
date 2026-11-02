@@ -4513,38 +4513,24 @@ AcpiDumpFvSearch (
     return;
   }
 
-  for (Index = 0; Index < Count; Index++) {
-    Status = gBS->HandleProtocol (
-                    Handles[Index],
-                    &gEfiFirmwareVolume2ProtocolGuid,
-                    (VOID **)&Fv
-                    );
-    if (EFI_ERROR (Status)) {
-      continue;
-    }
-
-    Attributes = 0;
-    FvStatus   = 0;
-    Size       = 0;
-    FileType   = (EFI_FV_FILETYPE)0;
-    FileBuffer = NULL;
-    //
-    // ReadFile rather than GetFileAttributes: this tree's
-    // EFI_FIRMWARE_VOLUME2_PROTOCOL predates that member.
-    //
-    Status = Fv->ReadFile (Fv, Guid, &FileBuffer, &Size, &FileType, &Attributes, &FvStatus);
-    DEBUG ((
-      DEBUG_ERROR,
-      "ACPI:   FV[%d] type 0x%x size 0x%x -> %r\n",
-      (UINT32)Index,
-      (UINT32)FileType,
-      (UINT32)Size,
-      Status
-      ));
-    if (!EFI_ERROR (Status) && (FileBuffer != NULL)) {
-      FreePool (FileBuffer);
-    }
-  }
+  //
+  // Count only. The previous version called ReadFile on every FV handle and the
+  // machine took a synchronous exception at 0x9DDD76208 a few lines later, so
+  // the probing itself is a suspect and has to be ruled out before it is
+  // restored one call at a time (with a size check before each).
+  //
+  DEBUG ((
+    DEBUG_ERROR,
+    "ACPI:   %d FV handle(s) present, no per-FV probe this build\n",
+    (UINT32)Count
+    ));
+  (VOID)Index;
+  (VOID)Fv;
+  (VOID)Attributes;
+  (VOID)FvStatus;
+  (VOID)Size;
+  (VOID)FileType;
+  (VOID)FileBuffer;
 
   FreePool (Handles);
 }
