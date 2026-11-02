@@ -196,6 +196,12 @@ jobs:
           echo "== does the vector install still use a static array? =="
           "$OBJDUMP" -d "$DLL" | grep -nE "adrp|bl .*AllocatePages|mrs|msr" | sed -n '1,10p' || true
 
+          echo "== every MSR SP_EL0 site, with 14 instructions of context =="
+          "$OBJDUMP" -d "$DLL" | grep -n -B14 "msr.*sp_el0" | head -60 || true
+
+          echo "== callers of AllocatePages in this image =="
+          "$OBJDUMP" -d "$DLL" | grep -n "bl.*AllocatePages" | head -5 || true
+
           echo "== ArchVectorConfig body =="
           AV=$(grep -iE "ArchVectorConfig" "$MAP" | head -1 | awk '{print $2}' || true)
           if [ -n "$AV" ]; then
