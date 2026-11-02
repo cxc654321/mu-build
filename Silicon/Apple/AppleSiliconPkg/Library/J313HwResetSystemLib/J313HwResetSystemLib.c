@@ -27,10 +27,23 @@ Refuse (
   IN CONST CHAR8  *Which
   )
 {
-  DEBUG ((DEBUG_ERROR, "\n##### RESET UNSUPPORTED (%a) #####\n", Which));
-  DEBUG ((DEBUG_ERROR, "No PSCI monitor on this machine; halting instead of faulting.\n"));
-  DEBUG ((DEBUG_ERROR, "##### HALTED #####\n"));
-  CpuDeadLoop ();
+  //
+  // Refuse the reset and hand control back to the caller.
+  //
+  // Halting here stopped the crash (the PSCI SMC was an undefined instruction)
+  // but also stopped the boot: BdsDxe asks for a warm reset whenever the memory
+  // type information it computes differs from what it started with, and with
+  // emulated variables (PcdEmuVariableNvModeEnable = TRUE) that record never
+  // survives a reboot, so the request repeats forever. The values cannot
+  // converge, and this tree has no PcdMemoryTypeInformation to seed either --
+  // it is not declared in any DEC here.
+  //
+  // Returning lets BDS carry on in the same boot. A reset that does not happen
+  // costs one reboot's worth of state at worst; the alternative is never
+  // reaching the boot manager at all.
+  //
+  DEBUG ((DEBUG_ERROR, "\n##### RESET REQUESTED (%a) -- IGNORED, CONTINUING #####\n", Which));
+  DEBUG ((DEBUG_ERROR, "No PSCI monitor here; see J313HwResetSystemLib.\n"));
 }
 
 VOID
