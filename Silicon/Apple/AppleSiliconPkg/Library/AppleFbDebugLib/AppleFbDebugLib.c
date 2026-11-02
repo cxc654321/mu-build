@@ -69,6 +69,7 @@ STATIC struct {
   UINTN              CurY;
   BOOLEAN            Ready;
   BOOLEAN            Probed;
+  BOOLEAN            Mirror;
 } mFb = { 0 };
 
 #define FB_CELL_W  (APPLE_FB_GLYPH_W * mFb.Scale)
@@ -94,6 +95,13 @@ FbPrintHex (
 
 STATIC
 VOID
+FbProbeLine (
+  IN BOOLEAN      Mirror,
+  IN CONST CHAR8  *Text
+  );
+
+STATIC
+VOID
 FbFlush (
   IN UINTN  Offset,
   IN UINTN  Length
@@ -110,7 +118,7 @@ FbPixel (
   IN UINT32  Color
   )
 {
-  if (FB_MIRROR_X) {
+  if (mFb.Mirror) {
     X = mFb.Width - 1 - X;
   }
 
@@ -164,6 +172,7 @@ FbProbe (
   mFb.Rows     = mFb.Height / (APPLE_FB_GLYPH_H * mFb.Scale);
   mFb.CurX     = 0;
   mFb.CurY     = 0;
+  mFb.Mirror   = FB_MIRROR_X;
   mFb.Ready    = TRUE;
 
   //
@@ -186,8 +195,19 @@ FbProbe (
   FbPuts (" SCALE ");
   FbPrintDec (mFb.Scale);
   FbPuts (" MIRROR ");
-  FbPrintDec (FB_MIRROR_X ? 1 : 0);
+  FbPrintDec (mFb.Mirror ? 1 : 0);
   FbPuts ("\n");
+
+  //
+  // Which way this panel scans out is a fact about the hardware that can only
+  // be read off the screen -- and reading the screen through a camera adds its
+  // own mirror if one is pointing the wrong way. So draw the same string twice,
+  // once each way, and let whoever is looking say which one is legible. That
+  // settles it in one boot instead of one boot per guess.
+  //
+  FbProbeLine (FALSE, "PROBE-A PLAIN    ABCDEFGHIJK 0123456789");
+  FbProbeLine (TRUE,  "PROBE-B MIRRORED ABCDEFGHIJK 0123456789");
+  FbPuts ("READABLE LINE WINS\n");
 }
 
 STATIC
@@ -333,6 +353,22 @@ FbPuts (
   while (*Text != '\0') {
     FbPutChar (*Text++);
   }
+}
+
+STATIC
+VOID
+FbProbeLine (
+  IN BOOLEAN      Mirror,
+  IN CONST CHAR8  *Text
+  )
+{
+  BOOLEAN  Saved;
+
+  Saved      = mFb.Mirror;
+  mFb.Mirror = Mirror;
+  FbPuts (Text);
+  FbPutChar ('\n');
+  mFb.Mirror = Saved;
 }
 
 STATIC

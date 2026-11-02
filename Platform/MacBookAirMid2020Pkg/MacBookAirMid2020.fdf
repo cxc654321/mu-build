@@ -122,7 +122,15 @@ READ_LOCK_STATUS   = TRUE
   DEFINE PLATFORM_ENABLE_MTP_HID = FALSE
   DEFINE PLATFORM_ENABLE_SERIAL_DXE = FALSE
   DEFINE PLATFORM_ENABLE_COLORBARS = TRUE
-  DEFINE PLATFORM_ENABLE_GENERIC_ACPI = FALSE
+  # TRUE, unlike the rest of the M1 set. AcpiPlatformDxe reads four ACPI
+  # storage files and ASSERTs on the first it cannot find; with this FALSE the
+  # FV carried no GenericAcpiTables FFS, so the boot died in an ASSERT right
+  # after the color bars:
+  #   AcpiPlatformDxe: Locating generic ACPI tables
+  #   AcpiPlatformDxe: Failed to locate generic tables, status Not Found
+  # Every M2/M3 platform ships it. The generic table is GTDT, whose timer
+  # interrupts T810XFamilyPkg.dsc.inc already PCDs.
+  DEFINE PLATFORM_ENABLE_GENERIC_ACPI = TRUE
 
   !include AppleSiliconPkg/AppleSiliconFvMain.fdf.inc
 
