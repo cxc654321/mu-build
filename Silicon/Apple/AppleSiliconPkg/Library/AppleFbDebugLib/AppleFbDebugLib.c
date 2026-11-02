@@ -108,6 +108,12 @@ FbGoto (
 
 STATIC
 VOID
+FbPutChar (
+  IN CHAR8  Ch
+  );
+
+STATIC
+VOID
 FbFlush (
   IN UINTN  Offset,
   IN UINTN  Length
