@@ -1,0 +1,140 @@
+name: build-j313
+
+# Mu firmware for J313 / MacBookAir10,1 (MacBook Air M1, 2020).
+#
+# Platform MacBookAirMid2020Pkg, built with stuart + CLANGPDB on Linux. The
+# feature set comes from Platform/Features.py via NTASI_MU_DEVICE, which is
+# exactly what Tools/mu-build exports, so this image matches the native one.
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: 'Device from Platform/Features.py DEVICES'
+        default: j313
+      platform:
+        description: 'Platform package'
+        default: MacBookAirMid2020Pkg
+      target:
+        description: 'DEBUG or RELEASE'
+        default: DEBUG
+  push:
+    branches: [ main ]
+    paths:
+      - 'Platform/MacBookAirMid2020Pkg/**'
+      - 'Silicon/Apple/**'
+      - 'Platform/Features.py'
+      - '.github/workflows/build-j313.yml'
+
+permissions:
+  contents: read
+
+env:
+  DEVICE: ${{ inputs.device || 'j313' }}
+  PLATFORM: ${{ inputs.platform || 'MacBookAirMid2020Pkg' }}
+  BUILD_TARGET: ${{ inputs.target || 'DEBUG' }}
+
+jobs:
+  build:
+    name: ${{ inputs.platform || 'MacBookAirMid2020Pkg' }} (${{ inputs.target || 'DEBUG' }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 1
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang lld llvm uuid-dev git ca-certificates \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu acpica-tools
+          nasm -v || sudo apt-get install -y nasm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Create venv and install stuart
+        run: |
+          python3 -m venv venv
+          source venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install --upgrade -r pip-requirements.txt
+          command -v stuart_build
+
+      - name: Export toolchain environment
+        run: |
+          LLVM_BIN="$(ls -d /usr/lib/llvm-*/bin 2>/dev/null | head -1)"
+          echo "CLANGPDB_BIN=${LLVM_BIN}/" >> "$GITHUB_ENV"
+          echo "CLANGPDB_AARCH64_PREFIX=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+          echo "GCC_AARCH64_PREFIX=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+          echo "LLVM_BIN=${LLVM_BIN}" >> "$GITHUB_ENV"
+          "${LLVM_BIN}/clang" --version | head -2
+          iasl -v | head -1
+
+      - name: Resolve feature set
+        run: python3 Platform/Features.py --resolve "$DEVICE" "" "" || true
+
+      - name: stuart_setup
+        run: |
+          source venv/bin/activate
+          stuart_setup -c "Platform/$PLATFORM/PlatformBuild.py" \
+            TOOL_CHAIN_TAG=CLANGPDB TARGET=$BUILD_TARGET
+
+      - name: stuart_update
+        run: |
+          source venv/bin/activate
+          stuart_update -c "Platform/$PLATFORM/PlatformBuild.py" \
+            TOOL_CHAIN_TAG=CLANGPDB TARGET=$BUILD_TARGET
+
+      - name: stuart_build
+        id: build
+        continue-on-error: true
+        env:
+          NTASI_MU_DEVICE: ${{ inputs.device || 'j313' }}
+          NTASI_MU_WITH: ''
+          NTASI_MU_WITHOUT: ''
+        run: |
+          source venv/bin/activate
+          stuart_build -c "Platform/$PLATFORM/PlatformBuild.py" \
+            TOOL_CHAIN_TAG=CLANGPDB TARGET=$BUILD_TARGET
+
+      - name: Build diagnostics
+        if: steps.build.outcome != 'success'
+        run: |
+          LOG=$(ls Build/*/BUILDLOG*.txt Build/BUILDLOG.txt 2>/dev/null | head -1)
+          echo "log=$LOG"
+          [ -n "$LOG" ] || exit 0
+          grep -nE 'INFO - .*(error|Error) F?[0-9]*:|undefined symbol|already defined' "$LOG" | tail -40 || true
+          echo "=== tail ==="
+          tail -60 "$LOG" || true
+
+      - name: Collect firmware
+        if: always()
+        run: |
+          mkdir -p dist
+          find Build -type f -iname '*.fd' -exec cp {} dist/ \; 2>/dev/null || true
+          ls -lh dist
+          for f in dist/*.fd; do [ -e "$f" ] || continue; shasum -a 256 "$f" | tee -a dist/SHA256SUMS.txt; done
+
+      - uses: actions/upload-artifact@v4
+        if: always() && hashFiles('dist/*') != ''
+        with:
+          name: uefi-firmware-${{ inputs.target || 'DEBUG' }}
+          path: dist/
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-log
+          path: |
+            Build/BUILDLOG.txt
+            Build/**/*.log
+          if-no-files-found: ignore
+
+      - name: Fail if build failed
+        if: steps.build.outcome != 'success'
+        run: exit 1
