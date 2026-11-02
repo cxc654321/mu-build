@@ -120,6 +120,39 @@ jobs:
           stuart_build -c "Platform/$PLATFORM/PlatformBuild.py" \
             TOOL_CHAIN_TAG=CLANGPDB TARGET=$BUILD_TARGET
 
+      - name: Disassemble the crash site
+        if: always()
+        run: |
+          set -eu
+          OBJDUMP=$(ls /usr/lib/llvm-*/bin/llvm-objdump 2>/dev/null | head -1)
+          DLL=$(find Build -path '*Drivers/CpuDxe/CpuDxe/DEBUG/CpuDxe.dll' 2>/dev/null | head -1)
+          echo "dll=$DLL objdump=$OBJDUMP"
+          [ -n "$DLL" ] || exit 0
+          "$OBJDUMP" -t "$DLL" | awk 'NF>=5 {print $1, $5}' | sort > /tmp/syms.txt
+          python3 - <<'PY'
+          target = 0x6A08
+          syms = []
+          for line in open('/tmp/syms.txt'):
+              parts = line.split()
+              if len(parts) != 2:
+                  continue
+              try:
+                  addr = int(parts[0], 16)
+              except ValueError:
+                  continue
+              syms.append((addr, parts[1]))
+          syms.sort()
+          chosen = None
+          for addr, name in syms:
+              if addr <= target:
+                  chosen = (addr, name)
+          if chosen:
+              print(f"NEAREST SYMBOL {chosen[1]} +0x{target - chosen[0]:x} (at 0x{chosen[0]:x})")
+          else:
+              print("no symbol below target")
+          PY
+          "$OBJDUMP" -d --start-address=0x69C0 --stop-address=0x6A40 "$DLL" | tail -50
+
       - name: Build diagnostics
         if: steps.build.outcome != 'success'
         run: |
