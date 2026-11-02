@@ -182,6 +182,26 @@ jobs:
           PY
           "$OBJDUMP" -d --start-address=0x69C0 --stop-address=0x6A40 "$DLL" | tail -50
 
+          echo "== map: symbols around 0x6A08 =="
+          MAP=$(find Build -name 'ArmCpuDxe.map' 2>/dev/null | head -1)
+          echo "map=$MAP"
+          if [ -n "$MAP" ]; then
+            grep -E "^ *0000:0000[0-9A-Fa-f]{8}" "$MAP" \
+              | awk '{ addr = strtonum("0x" $2); if (addr <= 0x6A08 && addr > 0x5000) print }' \
+              | sort -k2 | tail -5
+            echo "== map: ArchVectorConfig / RegisterEl0Stack =="
+            grep -inE "ArchVectorConfig|RegisterEl0Stack|InitializeCpuExceptionHandlers|AllocatePages" "$MAP" | head -12
+          fi
+
+          echo "== does the vector install still use a static array? =="
+          "$OBJDUMP" -d "$DLL" | grep -nE "adrp|bl .*AllocatePages|mrs|msr" | sed -n '1,10p' || true
+
+          echo "== ArchVectorConfig body =="
+          AV=$(grep -iE "ArchVectorConfig" "$MAP" | head -1 | awk '{print $2}' || true)
+          if [ -n "$AV" ]; then
+            "$OBJDUMP" -d --start-address=0x$AV --stop-address=$((0x$AV + 0x120)) "$DLL" | tail -60
+          fi
+
       - name: Build diagnostics
         if: steps.build.outcome != 'success'
         run: |
