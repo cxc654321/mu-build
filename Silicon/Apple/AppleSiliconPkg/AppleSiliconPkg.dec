@@ -22,6 +22,10 @@
   gAppleAnsDiagnosticBlockIoProtocolGuid = { 0x51ae8c79, 0x98cc, 0x4cda, { 0x8a, 0xdc, 0x85, 0x1d, 0x89, 0xb3, 0x82, 0xfe } }
 
 [PcdsFixedAtBuild.common]
+  # AppleFbDebugLib: panels whose scanout runs right-to-left need the text
+  # drawn mirrored. Discovered the hard way: the first J313 log photo was
+  # readable only in a mirror.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleFbDebugMirrorX|FALSE|BOOLEAN|0x00004730
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleSocIdentifier|0|UINT32|0x0000389e
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleUartBase|0|UINT64|0x00003900
   gAppleSiliconPkgTokenSpaceGuid.PcdInitializeRamdisk|FALSE|BOOLEAN|0x00003902

@@ -17,6 +17,7 @@
 #include <Uefi.h>
 
 #include <Library/BaseLib.h>
+#include <Library/DebugPrintErrorLevelLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/CacheMaintenanceLib.h>
 #include <Library/DebugLib.h>
@@ -48,6 +49,13 @@ typedef struct {
 #define APPLE_FB_GLYPH_W   8
 #define APPLE_FB_GLYPH_H   19
 #define APPLE_FB_DEFAULT_SCALE  2
+
+//
+/// Some panels hand the framebuffer back with the scanout running the other
+/// way: the log comes out mirror-imaged. A PCD rather than a guess, because the
+/// only way to tell is to read the screen.
+///
+#define FB_MIRROR_X  (FixedPcdGetBool (PcdAppleFbDebugMirrorX))
 
 STATIC struct {
   volatile UINT32    *Base;
@@ -92,6 +100,21 @@ FbFlush (
   )
 {
   WriteBackDataCacheRange ((VOID *)((UINTN)mFb.Base + Offset), Length);
+}
+
+STATIC
+VOID
+FbPixel (
+  IN UINTN   X,
+  IN UINTN   Y,
+  IN UINT32  Color
+  )
+{
+  if (FB_MIRROR_X) {
+    X = mFb.Width - 1 - X;
+  }
+
+  mFb.Base[Y * mFb.StridePx + X] = Color;
 }
 
 /**
@@ -162,6 +185,8 @@ FbProbe (
   FbPrintDec (mFb.StridePx);
   FbPuts (" SCALE ");
   FbPrintDec (mFb.Scale);
+  FbPuts (" MIRROR ");
+  FbPrintDec (FB_MIRROR_X ? 1 : 0);
   FbPuts ("\n");
 }
 
@@ -246,8 +271,11 @@ FbDrawGlyph (
         for (Py = 0; Py < mFb.Scale; Py++) {
           UINTN  X = OriginX + Col * mFb.Scale + Px;
           UINTN  Y = OriginY + Row * mFb.Scale + Py;
-          mFb.Base[Y * mFb.StridePx + X] =
-            ((Bits >> Col) & 1) ? 0xFFFFFFFFu : 0x00000000u;
+          //
+          // Bit 0 of GlyphCol1 is the leftmost pixel of the cell -- see
+          // GraphicsConsoleDxe's cursor code, which tests (BIT0 << PosX).
+          //
+          FbPixel (X, Y, ((Bits >> Col) & 1) ? 0xFFFFFFFFu : 0x00000000u);
         }
       }
     }
@@ -474,6 +502,10 @@ DebugPrintLevelEnabled (
   IN CONST UINTN  ErrorLevel
   )
 {
-  (VOID)ErrorLevel;
-  return TRUE;
+  //
+  // Honour PcdDebugPrintErrorLevel. Returning TRUE unconditionally put every
+  // DEBUG_POOL and DEBUG_PAGE line on the panel and buried the actual failure;
+  // DEBUG_ERROR still gets through, which is what a bring-up log needs.
+  //
+  return (BOOLEAN)((ErrorLevel & (UINTN)GetDebugPrintErrorLevel ()) != 0);
 }

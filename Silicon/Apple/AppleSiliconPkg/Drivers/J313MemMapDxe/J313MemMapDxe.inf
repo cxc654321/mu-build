@@ -1,0 +1,30 @@
+## @file
+#  Prints DXE's memory map and PrePi's resource-descriptor HOBs to the debug
+#  console. Read-only diagnostics for the J313 bring-up.
+#
+#  Copyright (c) 2026 Aurora Silicon
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+[Defines]
+  INF_VERSION    = 0x00010005
+  BASE_NAME      = J313MemMapDxe
+  FILE_GUID      = 6b1f7d02-3c58-4f7a-9d21-8e4c5a9b2d17
+  MODULE_TYPE    = DXE_DRIVER
+  VERSION_STRING = 1.0
+  ENTRY_POINT    = J313MemMapDxeInitialize
+
+[Sources]
+  J313MemMapDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  BaseLib
+  DebugLib
+  HobLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+
+[Depex]
+  TRUE

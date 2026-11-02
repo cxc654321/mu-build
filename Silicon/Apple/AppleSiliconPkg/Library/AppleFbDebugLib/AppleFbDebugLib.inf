@@ -29,6 +29,8 @@
   # here failed at lld-link with "undefined symbol: AsciiVSPrint".
   PrintLib
   PcdLib
+  DebugPrintErrorLevelLib
 
 [FixedPcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleFbDebugMirrorX
   gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer

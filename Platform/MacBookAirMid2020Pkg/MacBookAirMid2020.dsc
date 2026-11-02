@@ -70,6 +70,10 @@
   # from internal storage. BDS enumeration does not need it.
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPreserveForOs|FALSE
 
+  # The log photo came out mirror-imaged: this panel's scanout runs the other
+  # way. AppleFbDebugLib compensates when this is TRUE.
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleFbDebugMirrorX|TRUE
+
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModel|"MacBook Air (Mid 2020)"
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModelNumber|"MacBookAir10,1"
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemSku|"MacBook Air (MacBookAir10,1)"
@@ -78,6 +82,10 @@
 [Components.common]
 
   MacBookAirMid2020Pkg/AcpiTables/DeviceAcpiTables.inf
+
+  # Reads out DXE's memory map and PrePi's resource HOBs on the panel, before
+  # anything else has consumed memory. Bring-up diagnostic; depex TRUE.
+  AppleSiliconPkg/Drivers/J313MemMapDxe/J313MemMapDxe.inf
 
 !include T810XFamilyPkg/T810XFamilyPkg.dsc.inc
 !include AppleSiliconPkg/AppleSiliconPkg.dsc.inc
