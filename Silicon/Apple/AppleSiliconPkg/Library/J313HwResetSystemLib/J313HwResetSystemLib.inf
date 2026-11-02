@@ -1,0 +1,24 @@
+## @file
+#  HwResetSystemLib that halts instead of issuing an unavailable PSCI call.
+#
+#  Copyright (c) 2026 Aurora Silicon
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+[Defines]
+  INF_VERSION    = 0x00010005
+  BASE_NAME      = J313HwResetSystemLib
+  FILE_GUID      = 7c4e1a02-5b6d-4f39-8a71-2d9c6b3e4f58
+  MODULE_TYPE    = BASE
+  VERSION_STRING = 1.0
+  LIBRARY_CLASS  = HwResetSystemLib
+  CONSTRUCTOR    = J313HwResetSystemLibConstructor
+
+[Sources]
+  J313HwResetSystemLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  BaseLib
+  DebugLib

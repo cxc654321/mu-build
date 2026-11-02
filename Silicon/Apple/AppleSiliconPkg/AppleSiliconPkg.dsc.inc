@@ -364,7 +364,10 @@
   ResetUtilityLib|MdeModulePkg/Library/ResetUtilityLib/ResetUtilityLib.inf
   #
   # ArmSmcPsciResetSystemLib is refactored into a single PSCI reset system lib as of 202502
-  HwResetSystemLib|ArmPkg/Library/ArmPsciResetSystemLib/ArmPsciResetSystemLib.inf
+  # ArmPsciResetSystemLib issues a PSCI SYSTEM_RESET2 through SMC; there is no
+  # PSCI monitor here, so a warm reset became "unknown instruction" and killed
+  # the boot inside ResetSystemRuntimeDxe. Halt and report instead.
+  HwResetSystemLib|AppleSiliconPkg/Library/J313HwResetSystemLib/J313HwResetSystemLib.inf
   ResetSystemLib|MdeModulePkg/Library/DxeResetSystemLib/DxeResetSystemLib.inf
   FltUsedLib|MsCorePkg/Library/FltUsedLib/FltUsedLib.inf
 
@@ -514,7 +517,10 @@
   ExtractGuidedSectionLib|MdePkg/Library/DxeExtractGuidedSectionLib/DxeExtractGuidedSectionLib.inf
 
   # System Reset
-  HwResetSystemLib|ArmPkg/Library/ArmPsciResetSystemLib/ArmPsciResetSystemLib.inf
+  # ArmPsciResetSystemLib issues a PSCI SYSTEM_RESET2 through SMC; there is no
+  # PSCI monitor here, so a warm reset became "unknown instruction" and killed
+  # the boot inside ResetSystemRuntimeDxe. Halt and report instead.
+  HwResetSystemLib|AppleSiliconPkg/Library/J313HwResetSystemLib/J313HwResetSystemLib.inf
   ResetSystemLib|MdeModulePkg/Library/RuntimeResetSystemLib/RuntimeResetSystemLib.inf
 
   VariablePolicyLib|MdeModulePkg/Library/VariablePolicyLib/VariablePolicyLibRuntimeDxe.inf
