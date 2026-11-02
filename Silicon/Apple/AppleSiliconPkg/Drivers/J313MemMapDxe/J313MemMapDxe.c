@@ -58,6 +58,24 @@ MemTypeName (
 }
 
 STATIC
+CONST CHAR8 *
+ResourceTypeName (
+  IN EFI_RESOURCE_TYPE  Type
+  )
+{
+  switch (Type) {
+    case EFI_RESOURCE_SYSTEM_MEMORY:          return "SYS ";
+    case EFI_RESOURCE_MEMORY_MAPPED_IO:       return "MMIO";
+    case EFI_RESOURCE_IO:                     return "IO  ";
+    case EFI_RESOURCE_FIRMWARE_DEVICE:        return "FW  ";
+    case EFI_RESOURCE_MEMORY_MAPPED_IO_PORT:  return "MMP ";
+    case EFI_RESOURCE_MEMORY_RESERVED:        return "RSVD";
+    case EFI_RESOURCE_IO_RESERVED:            return "IOR ";
+    default:                                  return "??? ";
+  }
+}
+
+STATIC
 VOID
 ReportMemoryMap (
   VOID
@@ -154,7 +172,7 @@ ReportMemoryHobs (
   // Plain pointer arithmetic: GET_NEXT_HOB() takes the address of its argument,
   // so it needs an lvalue -- &Handoff->Header is not one.
   //
-  Hob = (EFI_HOB_GENERIC_HEADER *)((UINT8 *)Handoff + Handoff->Header.HeaderLength);
+  Hob = (EFI_HOB_GENERIC_HEADER *)((UINT8 *)Handoff + Handoff->Header.HobLength);
   while (!END_OF_HOB_LIST (Hob)) {
     if (Hob->HobType == EFI_HOB_TYPE_RESOURCE_DESCRIPTOR) {
       EFI_HOB_RESOURCE_DESCRIPTOR  *Resource;
@@ -164,7 +182,7 @@ ReportMemoryHobs (
         DEBUG ((
           DEBUG_ERROR,
           "  HOB  %a 0x%lx +0x%lx\n",
-          MemTypeName (Resource->ResourceType),
+          ResourceTypeName (Resource->ResourceType),
           (UINT64)Resource->PhysicalStart,
           (UINT64)Resource->ResourceLength
           ));
