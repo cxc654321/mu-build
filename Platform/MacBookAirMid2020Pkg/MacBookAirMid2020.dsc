@@ -52,6 +52,21 @@
 
 [PcdsFixedAtBuild.common]
   #
+  # Do not ask for a warm reset when the memory type information changes.
+  #
+  # MdeModulePkg/Library/UefiBootManagerLib/BmMisc.c prints
+  # "Memory Type Information settings change." and, when this is TRUE, follows it
+  # with "...Warm Reset!!!" and gRT->ResetSystem (EfiResetWarm). On this machine
+  # that request either kills the boot (ArmPsciResetSystemLib issued an SMC with
+  # no PSCI monitor: EC 0x00 unknown instruction) or, with our halting reset
+  # library, stops it -- and it can never stop being requested, because
+  # PcdEmuVariableNvModeEnable is TRUE, so the memory type information variable
+  # is rebuilt from scratch every boot and the comparison always differs.
+  #
+  # FALSE is the upstream-supported way to say "record it, do not reboot".
+  #
+  gEfiMdeModulePkgTokenSpaceGuid.PcdResetOnMemoryTypeInformationChange|FALSE
+  #
   # Internal storage, which BDS can then enumerate.
   #
   # AppleNANDStorageDxe is already in the FV on this platform
