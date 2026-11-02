@@ -45,6 +45,10 @@
 [BuildOptions.common]
   GCC:*_*_AARCH64_CC_FLAGS = -DSILICON_PLATFORM=8103
   *_*_*_CC_FLAGS = -D DISABLE_NEW_DEPRECATED_INTERFACES -D HAS_MEMCPY_INTRINSICS
+  # XmlSupportPkg's vendored fasterxml carries #pragma optimize("", off) to
+  # stop MSVC turning a loop into a memset. Clang ignores that pragma and
+  # reports it; with -Werror the whole XmlTreeLib module fails to compile.
+  *_CLANGPDB_AARCH64_CC_FLAGS = -Wno-ignored-pragma-optimize
 
 [PcdsFixedAtBuild.common]
   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemModel|"MacBook Air (Mid 2020)"
