@@ -300,7 +300,10 @@
   #
   # Produces EfiGraphicsOutputProtocol to draw graphics to the screen.
   #
-  #MsGraphicsPkg/RenderingEngineDxe/RenderingEngineDxe.inf
+  # Simple Rendering Engine: SimpleWindowManagerDxe refuses to publish
+  # gMsSWMProtocol without it ("Failed to find Rendering Engine after finding
+  # GOP"), and FrontPage then fails to start with Unsupported.
+  MsGraphicsPkg/RenderingEngineDxe/RenderingEngineDxe.inf
   #
   # Finds and takes ownership of gEfiGraphicsOutputProtocolGuid so RenderingEngine can use it.
   #

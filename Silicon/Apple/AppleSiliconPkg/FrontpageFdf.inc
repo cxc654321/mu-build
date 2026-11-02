@@ -3,7 +3,8 @@
   INF DfciPkg/AuthManagerNull/AuthManagerNull.inf #change when non-volatile storage is ready
   INF DfciPkg/SettingsManager/SettingsManagerDxe.inf
   INF MsGraphicsPkg/MsUiTheme/Dxe/MsUiThemeProtocol.inf
-  #INF MsGraphicsPkg/RenderingEngineDxe/RenderingEngineDxe.inf
+  # Provides gMsSREProtocolGuid (and its own GOP) for SimpleWindowManagerDxe.
+  INF MsGraphicsPkg/RenderingEngineDxe/RenderingEngineDxe.inf
   INF MsGraphicsPkg/DisplayEngineDxe/DisplayEngineDxe.inf
   #
   # The window manager has to be dispatched before the UI that looks for it.
