@@ -508,4 +508,4 @@ APPLE_FB_GLYPH  mAppleFbGlyphs[] = {
 };
 
 // Get available Unicode glyphs narrow fonts(8*19 pixels) size.
-UINT32  mNarrowFontSize =  sizeof (mAppleFbGlyphs);
+UINT32  mAppleFbFontSize =  sizeof (mAppleFbGlyphs);
