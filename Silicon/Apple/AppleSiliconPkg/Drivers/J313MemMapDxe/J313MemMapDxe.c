@@ -197,6 +197,47 @@ ReportMemoryHobs (
   DEBUG ((DEBUG_ERROR, "HOB: %d resource descriptors\n", Count));
 }
 
+//
+/// The exception vector code that handles "Current EL with SP0" switches to
+/// SP_EL0 and stores the register frame there. Nothing in ArmCpuDxe writes
+/// SP_EL0 (its disassembly contains no such instruction), so on this machine
+/// the vector inherits whatever SP_EL0 held when the firmware started -- and
+/// the first synchronous exception dies storing to it:
+///
+///   ELR = ArmCpuDxe +0x6A08   (stp x0, x1, [sp, #-256]!)
+///   FAR = 0x0DDD82E50         (SP_EL0 - 256, high bits missing)
+///
+/// Give it a real buffer, from our own image, and report what it was before.
+///
+STATIC UINT8  mEl0Stack[16 * 1024] __attribute__ ((aligned (16)));
+
+STATIC
+VOID
+PointSpEl0AtOurStack (
+  VOID
+  )
+{
+  UINT64  Before;
+  UINT64  After;
+  UINT64  Top;
+
+  __asm__ volatile ("mrs %0, sp_el0" : "=r" (Before));
+
+  Top = (UINT64)(UINTN)mEl0Stack + sizeof (mEl0Stack);
+  Top &= ~(UINT64)0xF;
+  __asm__ volatile ("msr sp_el0, %0" : : "r" (Top));
+
+  __asm__ volatile ("mrs %0, sp_el0" : "=r" (After));
+
+  DEBUG ((
+    DEBUG_ERROR,
+    "EL0STACK: sp_el0 was 0x%lx, now 0x%lx (buffer 0x%lx)\n",
+    Before,
+    After,
+    (UINT64)(UINTN)mEl0Stack
+    ));
+}
+
 EFI_STATUS
 EFIAPI
 J313MemMapDxeInitialize (
@@ -204,6 +245,7 @@ J313MemMapDxeInitialize (
   IN EFI_SYSTEM_TABLE  *SystemTable
   )
 {
+  PointSpEl0AtOurStack ();
   ReportMemoryMap ();
   ReportMemoryHobs ();
   return EFI_SUCCESS;
