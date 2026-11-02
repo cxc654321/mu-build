@@ -80,6 +80,17 @@ jobs:
       - name: Resolve feature set
         run: python3 Platform/Features.py --resolve "$DEVICE" "" "" || true
 
+      - name: Check payload layout
+        run: |
+          echo "== package dirs with ArmPkg =="
+          ls -d */ArmPkg */*/ArmPkg 2>/dev/null || echo "(none)"
+          echo "== ArmMmuLib in TIANO =="
+          ls -l Silicon/ARM/TIANO/ArmPkg/Library/ArmMmuLib/ 2>/dev/null || echo "(missing)"
+          echo "== submodule heads =="
+          for m in MU_BASECORE Common/MU Common/TIANO Silicon/ARM/TIANO Common/MU_DFCI Common/MU_OEM_SAMPLE mu_feature_debugger; do
+            printf '%-24s %s\n' "$m" "$(git -C "$m" rev-parse HEAD 2>/dev/null || echo missing)"
+          done
+
       - name: stuart_setup
         run: |
           source venv/bin/activate

@@ -37,3 +37,6 @@ Silicon/Apple/AppleSiliconPkg/RAMDisk/WinPE.iso
 Silicon/Apple/AppleSiliconPkg/RAMDisk/WinPE.img
 Silicon/Apple/AppleSiliconPkg/FirmwareBlobs/ASM2214A_PCI_XHCI_Controller.bin
 Silicon/Apple/AppleSiliconPkg/Include/Drivers/XhciFirmwareBlob.h
+
+# local stuart venv used when a CI failure needs reproducing
+.venv-ci/
