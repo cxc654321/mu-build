@@ -142,6 +142,104 @@ FbPixel (
 
   Called from DebugPrint, so it must not recurse into anything that prints.
 **/
+
+/**
+  One glyph, blown up, with the two corrections controllable independently.
+
+  The reports have been contradictory because two different things can be wrong
+  at once: where a pixel lands on the panel (scanout direction) and which way
+  round the glyph's columns run. This draws "F" four times, once per
+  combination, at fixed screen positions, so one look at the panel says which
+  combination is upright instead of another round of guessing.
+
+    row 1: mirror off, font normal
+    row 2: mirror off, font flipped
+    row 3: mirror on,  font normal
+    row 4: mirror on,  font flipped
+**/
+STATIC
+VOID
+FbBigGlyph (
+  IN CHAR8    Ch,
+  IN UINTN    OriginX,
+  IN UINTN    OriginY,
+  IN UINTN    Scale,
+  IN BOOLEAN  Mirror,
+  IN BOOLEAN  FlipFont
+  )
+{
+  CONST APPLE_FB_GLYPH  *Glyph;
+  UINTN                 Col;
+  UINTN                 Row;
+  UINTN                 Px;
+  UINTN                 Py;
+  UINT32                Bits;
+  BOOLEAN               Saved;
+
+  if (!mFb.Ready) {
+    return;
+  }
+
+  if (((UINT8)Ch < 0x20) || ((UINT8)Ch > 0x7E)) {
+    Ch = 'F';
+  }
+
+  Glyph = &mAppleFbGlyphs[(UINT8)Ch - 0x20];
+  Saved = mFb.Mirror;
+  mFb.Mirror = Mirror;
+
+  for (Col = 0; Col < APPLE_FB_GLYPH_W; Col++) {
+    for (Row = 0; Row < APPLE_FB_GLYPH_H; Row++) {
+      Bits = Glyph->GlyphCol1[Row];
+      if (((Bits >> (FlipFont ? (APPLE_FB_GLYPH_W - 1 - Col) : Col)) & 1) == 0) {
+        continue;
+      }
+
+      for (Px = 0; Px < Scale; Px++) {
+        for (Py = 0; Py < Scale; Py++) {
+          UINTN  X = OriginX + Col * Scale + Px;
+          UINTN  Y = OriginY + Row * Scale + Py;
+
+          if ((X < mFb.Width) && (Y < mFb.Height)) {
+            FbPixel (X, Y, 0xFFFFFFFFu);
+          }
+        }
+      }
+    }
+  }
+
+  mFb.Mirror = Saved;
+  if ((OriginY < mFb.Height) && (OriginX < mFb.Width)) {
+    FbFlush (OriginY * mFb.StridePx * 4, ((APPLE_FB_GLYPH_H * Scale * mFb.StridePx) * 4));
+  }
+}
+
+STATIC
+VOID
+FbCalibrationSheet (
+  VOID
+  )
+{
+  UINTN  Scale;
+  UINTN  Step;
+
+  if (!mFb.Ready) {
+    return;
+  }
+
+  Scale = mFb.Height / 120;
+  if (Scale < 3) {
+    Scale = 3;
+  }
+
+  Step = APPLE_FB_GLYPH_H * Scale + Scale * 4;
+
+  FbBigGlyph ('F', mFb.Width / 8, Step * 0, Scale, FALSE, FALSE);
+  FbBigGlyph ('F', mFb.Width / 8, Step * 1, Scale, FALSE, TRUE);
+  FbBigGlyph ('F', mFb.Width / 8, Step * 2, Scale, TRUE,  FALSE);
+  FbBigGlyph ('F', mFb.Width / 8, Step * 3, Scale, TRUE,  TRUE);
+}
+
 STATIC
 VOID
 FbProbe (
@@ -233,6 +331,10 @@ FbProbe (
   FbPutChar ('\n');
   FbGoto (0);
   FbPuts ("A-LEFT\n");
+  FbPuts ("CALIBRATION: FOUR F GLYPHS, ROWS 1-4 = M0F0 M0F1 M1F0 M1F1\n");
+  FbPuts ("TELL ME WHICH ROW IS UPRIGHT\n");
+
+  FbCalibrationSheet ();
 }
 
 STATIC
