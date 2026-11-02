@@ -23,6 +23,7 @@ on:
       - 'Platform/MacBookAirMid2020Pkg/**'
       - 'Silicon/Apple/**'
       - 'Platform/Features.py'
+      - 'Tools/ui-trace.py'
       - '.github/workflows/build-j313.yml'
 
 permissions:
