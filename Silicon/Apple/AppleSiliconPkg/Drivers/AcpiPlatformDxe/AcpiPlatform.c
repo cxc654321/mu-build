@@ -4467,6 +4467,77 @@ AppleAcpiTrimMadtToAdt (
   @return EFI_OUT_OF_RESOURCES
 
 **/
+/**
+  Say what the FVs actually hold for one storage GUID.
+
+  The generic-tier lookup failed while the build log showed its FFS being
+  generated, so "is it in an FV at all, and does ReadSection agree" has to be
+  answered from the running machine rather than from the build.
+**/
+STATIC
+VOID
+AcpiDumpFvSearch (
+  IN CONST CHAR8  *Label,
+  IN EFI_GUID     *Guid
+  )
+{
+  EFI_STATUS                     Status;
+  EFI_HANDLE                     *Handles;
+  UINTN                          Count;
+  UINTN                          Index;
+  EFI_FIRMWARE_VOLUME2_PROTOCOL  *Fv;
+  EFI_FV_FILE_ATTRIBUTES         Attributes;
+  UINT32                         FvStatus;
+  UINTN                          Size;
+
+  Handles = NULL;
+  Count   = 0;
+  Status  = gBS->LocateHandleBuffer (
+                   ByProtocol,
+                   &gEfiFirmwareVolume2ProtocolGuid,
+                   NULL,
+                   &Count,
+                   &Handles
+                   );
+  DEBUG ((
+    DEBUG_ERROR,
+    "ACPI: %a guid %g -- %d FV handles, locate %r\n",
+    Label,
+    Guid,
+    (UINT32)Count,
+    Status
+    ));
+  if (EFI_ERROR (Status)) {
+    return;
+  }
+
+  for (Index = 0; Index < Count; Index++) {
+    Status = gBS->HandleProtocol (
+                    Handles[Index],
+                    &gEfiFirmwareVolume2ProtocolGuid,
+                    (VOID **)&Fv
+                    );
+    if (EFI_ERROR (Status)) {
+      continue;
+    }
+
+    Attributes = 0;
+    FvStatus   = 0;
+    Size       = 0;
+    Status     = Fv->GetFileAttributes (Fv, Guid, &Attributes, &Size, &FvStatus);
+    DEBUG ((
+      DEBUG_ERROR,
+      "ACPI:   FV[%d] attrs 0x%x size 0x%x -> %r\n",
+      (UINT32)Index,
+      (UINT32)Attributes,
+      (UINT32)Size,
+      Status
+      ));
+  }
+
+  FreePool (Handles);
+}
+
 EFI_STATUS
 EFIAPI
 AcpiPlatformEntryPoint (
@@ -4498,8 +4569,8 @@ AcpiPlatformEntryPoint (
   Status = gBS->LocateProtocol (&gEfiAcpiTableProtocolGuid, NULL, (VOID **)&AcpiTable);
   if (EFI_ERROR (Status)) {
     DEBUG((DEBUG_ERROR, "%a: Failed to locate ACPI protocol, status %r (error code %llx)\n", __FUNCTION__, Status, Status));
-    ASSERT(FALSE);
-    return EFI_ABORTED;
+    // Nothing to publish without it; leave the boot to continue regardless.
+    return EFI_SUCCESS;
   }
 
   //
@@ -4508,9 +4579,8 @@ AcpiPlatformEntryPoint (
   DEBUG((DEBUG_ERROR, "%a: Locating device specific ACPI tables\n", __FUNCTION__));
   Status = LocateFvInstanceWithDeviceTables (&FwVol);
   if (EFI_ERROR (Status)) {
-    DEBUG((DEBUG_ERROR, "%a: Failed to locate device specific tables, status %r (error code %llx)\n", __FUNCTION__, Status, Status));
-    ASSERT(FALSE);
-    return EFI_ABORTED;
+    DEBUG((DEBUG_ERROR, "%a: Failed to locate device specific tables, status %r (error code %llx) -- continuing\n", __FUNCTION__, Status, Status));
+    AcpiDumpFvSearch ("device", (EFI_GUID *)PcdGetPtr (PcdDeviceAcpiTableStorageFile));
   }
 
   //
@@ -4576,9 +4646,8 @@ AcpiPlatformEntryPoint (
   DEBUG((DEBUG_ERROR, "%a: Locating SoC specific ACPI tables\n", __FUNCTION__));
   Status = LocateFvInstanceWithSocTables (&FwVol2);
   if (EFI_ERROR (Status)) {
-    DEBUG((DEBUG_ERROR, "%a: Failed to locate SoC specific tables, status %r (error code %llx)\n", __FUNCTION__, Status, Status));
-    ASSERT(FALSE);
-    return EFI_ABORTED;
+    DEBUG((DEBUG_ERROR, "%a: Failed to locate SoC specific tables, status %r (error code %llx) -- continuing\n", __FUNCTION__, Status, Status));
+    AcpiDumpFvSearch ("soc", (EFI_GUID *)PcdGetPtr (PcdSocAcpiTableStorageFile));
   }
 
   //
@@ -4654,9 +4723,8 @@ AcpiPlatformEntryPoint (
   DEBUG((DEBUG_ERROR, "%a: Locating generic ACPI tables\n", __FUNCTION__));
   Status = LocateFvInstanceWithGenericTables (&FwVol2);
   if (EFI_ERROR (Status)) {
-    DEBUG((DEBUG_ERROR, "%a: Failed to locate generic tables, status %r (error code %llx)\n", __FUNCTION__, Status, Status));
-    ASSERT(FALSE);
-    return EFI_ABORTED;
+    DEBUG((DEBUG_ERROR, "%a: Failed to locate generic tables, status %r (error code %llx) -- continuing\n", __FUNCTION__, Status, Status));
+    AcpiDumpFvSearch ("generic", (EFI_GUID *)PcdGetPtr (PcdGenericAcpiTableStorageFile));
   }
 
   //
@@ -4719,9 +4787,8 @@ AcpiPlatformEntryPoint (
   DEBUG((DEBUG_ERROR, "%a: Locating device family ACPI tables\n", __FUNCTION__));
   Status = LocateFvInstanceWithDeviceFamilyTables (&FwVol2);
   if (EFI_ERROR (Status)) {
-    DEBUG((DEBUG_ERROR, "%a: Failed to locate device family tables, status %r (error code %llx)\n", __FUNCTION__, Status, Status));
-    ASSERT(FALSE);
-    return EFI_ABORTED;
+    DEBUG((DEBUG_ERROR, "%a: Failed to locate device family tables, status %r (error code %llx) -- continuing\n", __FUNCTION__, Status, Status));
+    AcpiDumpFvSearch ("family", (EFI_GUID *)PcdGetPtr (PcdDeviceFamilyAcpiTableStorageFile));
   }
 
   //

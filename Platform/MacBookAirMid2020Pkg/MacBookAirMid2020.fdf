@@ -121,7 +121,9 @@ READ_LOCK_STATUS   = TRUE
   DEFINE PLATFORM_ENABLE_TYPEC = FALSE
   DEFINE PLATFORM_ENABLE_MTP_HID = FALSE
   DEFINE PLATFORM_ENABLE_SERIAL_DXE = FALSE
-  DEFINE PLATFORM_ENABLE_COLORBARS = TRUE
+  # Off: the color bars proved SimpleFbDxe and the panel work, and now they only
+  # paint over the framebuffer debug log that everything else depends on.
+  DEFINE PLATFORM_ENABLE_COLORBARS = FALSE
   # TRUE, unlike the rest of the M1 set. AcpiPlatformDxe reads four ACPI
   # storage files and ASSERTs on the first it cannot find; with this FALSE the
   # FV carried no GenericAcpiTables FFS, so the boot died in an ASSERT right

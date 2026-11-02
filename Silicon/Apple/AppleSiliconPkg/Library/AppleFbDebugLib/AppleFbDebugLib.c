@@ -102,6 +102,22 @@ FbProbeLine (
 
 STATIC
 VOID
+FbDrawCorners (
+  VOID
+  );
+
+STATIC
+VOID
+FbFillRectRaw (
+  IN UINTN   X,
+  IN UINTN   Y,
+  IN UINTN   W,
+  IN UINTN   H,
+  IN UINT32  Color
+  );
+
+STATIC
+VOID
 FbFlush (
   IN UINTN  Offset,
   IN UINTN  Length
@@ -207,7 +223,16 @@ FbProbe (
   //
   FbProbeLine (FALSE, "PROBE-A PLAIN    ABCDEFGHIJK 0123456789");
   FbProbeLine (TRUE,  "PROBE-B MIRRORED ABCDEFGHIJK 0123456789");
-  FbPuts ("READABLE LINE WINS\n");
+  FbPuts ("READABLE LINE WINS. RUNTIME MIRROR ");
+  FbPrintDec (mFb.Mirror ? 1 : 0);
+  FbPuts ("\n");
+  FbPuts ("CORNERS TL=SOLID TR=HOLLOW BL=HBAR BR=VBAR\n");
+
+  //
+  // Drawn last, and redrawn after every scroll, so the markers are readable
+  // whatever the text has done.
+  //
+  FbDrawCorners ();
 }
 
 STATIC
@@ -234,6 +259,7 @@ FbScroll (
     );
   FbFlush (0, mFb.Rows * CellH * LineBytes);
   mFb.CurY = mFb.Rows - 1;
+  FbDrawCorners ();
 }
 
 /**
@@ -353,6 +379,85 @@ FbPuts (
   while (*Text != '\0') {
     FbPutChar (*Text++);
   }
+}
+
+STATIC
+VOID
+FbFillRectRaw (
+  IN UINTN   X,
+  IN UINTN   Y,
+  IN UINTN   W,
+  IN UINTN   H,
+  IN UINT32  Color
+  )
+{
+  UINTN  Row;
+  UINTN  Col;
+
+  if (!mFb.Ready) {
+    return;
+  }
+
+  for (Row = 0; Row < H; Row++) {
+    for (Col = 0; Col < W; Col++) {
+      UINTN  Px = X + Col;
+      UINTN  Py = Y + Row;
+
+      if ((Px >= mFb.Width) || (Py >= mFb.Height)) {
+        continue;
+      }
+
+      mFb.Base[Py * mFb.StridePx + Px] = Color;
+    }
+  }
+
+  FbFlush (Y * mFb.StridePx * 4, H * mFb.StridePx * 4);
+}
+
+/**
+  Four markers, each a different shape, drawn with NO mirroring applied.
+
+  Reading a mirrored screen through a mirrored camera cancels out, and text
+  alone cannot tell "mirrored panel" from "mirrored photograph". Where these
+  land cannot lie: the solid square is written at (0,0), so if it appears at the
+  top right the scanout is X-mirrored, if it appears at the bottom left the rows
+  run the other way, and if the shapes come out transposed, X and Y are swapped.
+
+  Redrawn on every scroll, because the text console owns the whole screen.
+**/
+STATIC
+VOID
+FbDrawCorners (
+  VOID
+  )
+{
+  UINTN  S;
+  UINTN  T;
+
+  if (!mFb.Ready) {
+    return;
+  }
+
+  S = mFb.Height / 8;
+  T = S / 12;
+  if (T < 4) {
+    T = 4;
+  }
+
+  // (0,0): solid square
+  FbFillRectRaw (0, 0, S, S, 0xFFFFFFFFu);
+
+  // top right: hollow square
+  FbFillRectRaw (mFb.Width - S, 0, S, T, 0xFFFFFFFFu);
+  FbFillRectRaw (mFb.Width - S, S - T, S, T, 0xFFFFFFFFu);
+  FbFillRectRaw (mFb.Width - S, 0, T, S, 0xFFFFFFFFu);
+  FbFillRectRaw (mFb.Width - T, 0, T, S, 0xFFFFFFFFu);
+
+  // bottom left: wide bar
+  FbFillRectRaw (0, mFb.Height - S / 3, S * 2, S / 3, 0xFFFFFFFFu);
+
+  // bottom right: tall bar
+  FbFillRectRaw (mFb.Width - S / 3, mFb.Height - S * 2, S / 3, S * 2, 0xFFFFFFFFu);
 }
 
 STATIC

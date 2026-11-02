@@ -229,7 +229,6 @@
         "INF AppleSiliconPkg/Drivers/SmbiosInfoDxe/SmbiosInfoDxe.inf",
         "INF MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf",
         "INF ShellPkg/Application/Shell/Shell.inf",
-        "INF AppleSiliconPkg/Drivers/ColorbarsDxe/ColorbarsDxe.inf",
         "INF MdeModulePkg/Universal/PrintDxe/PrintDxe.inf",
         "INF MdeModulePkg/Universal/DevicePathDxe/DevicePathDxe.inf",
         "INF MdeModulePkg/Universal/DisplayEngineDxe/DisplayEngineDxe.inf",
