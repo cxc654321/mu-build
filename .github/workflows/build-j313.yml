@@ -108,6 +108,33 @@ jobs:
           stuart_update -c "Platform/$PLATFORM/PlatformBuild.py" \
             TOOL_CHAIN_TAG=CLANGPDB TARGET=$BUILD_TARGET
 
+      - name: Patch ArmExceptionLib to keep the EL0 stack off the image
+        run: |
+          # ArmExceptionLib puts the EL0 exception stack in the CpuDxe image's
+          # .bss (mNewStackBase) and points SP_EL0 at it. On this machine the
+          # exception vector's first store (ELR = CpuDxe +0x6A08,
+          # "stp x0, x1, [sp, #-256]!") faults on an address a few thousand
+          # bytes into that array with its top bits gone, so the handler kills
+          # itself before it can report anything.
+          #
+          # The library already has a heap-allocated variant, used by the J813
+          # PMCCNTR work for exactly this reason ("ArmCpuDxe's image data can
+          # become read-protected"). Take it unconditionally and see whether
+          # the second fault goes away; the handler now also reports whether
+          # FAR reconstructs into the image, which says whether this was a
+          # mapping problem or a truncated pointer.
+          python3 - <<'PY'
+          p = "Silicon/ARM/TIANO/ArmPkg/Library/ArmExceptionLib/AArch64/AArch64Exception.c"
+          src = open(p).read()
+          old = "#if NTASI_J813_PMCCNTR_EMULATION"
+          if old in src:
+              src = src.replace(old, "#if 1 /* J313: heap-allocated EL0 exception stack */", 1)
+              open(p, "w").write(src)
+              print("patched:", p)
+          else:
+              print("pattern not found; ArmExceptionLib unchanged")
+          PY
+
       - name: stuart_build
         id: build
         continue-on-error: true

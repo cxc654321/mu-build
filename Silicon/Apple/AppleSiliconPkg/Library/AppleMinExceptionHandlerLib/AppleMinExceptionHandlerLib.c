@@ -39,7 +39,8 @@
 STATIC
 VOID
 ReportImageFor (
-  IN UINT64  Address
+  IN UINT64  Address,
+  IN UINT64  FaultAddress
   )
 {
   EFI_STATUS                         Status;
@@ -115,11 +116,35 @@ ReportImageFor (
 
     DEBUG ((
       DEBUG_ERROR,
-      "MOD  %a +0x%lx (base 0x%lx)\n",
+      "MOD  %a +0x%lx (base 0x%lx size 0x%lx)\n",
       (Length > 0) ? Buffer : "(unnamed)",
       Address - (UINT64)(UINTN)Image->ImageBase,
-      (UINT64)(UINTN)Image->ImageBase
+      (UINT64)(UINTN)Image->ImageBase,
+      (UINT64)Image->ImageSize
       ));
+
+    //
+    // If FAR looks like an address in this image with its top bits missing,
+    // say so outright: it distinguishes "wrote to an unmapped page" from
+    // "a pointer lost its high half on the way to a store".
+    //
+    if ((FaultAddress != 0) && (FaultAddress < (UINT64)(UINTN)Image->ImageBase)) {
+      UINT64  Rebuilt;
+
+      Rebuilt = (UINT64)(UINTN)Image->ImageBase | (FaultAddress & 0xFFFFFFFFull);
+      if ((Rebuilt >= (UINT64)(UINTN)Image->ImageBase) &&
+          (Rebuilt < ((UINT64)(UINTN)Image->ImageBase + (UINT64)Image->ImageSize)))
+      {
+        DEBUG ((
+          DEBUG_ERROR,
+          "FAR  0x%lx is inside this image if the high bits were kept: 0x%lx (+0x%lx)\n",
+          FaultAddress,
+          Rebuilt,
+          Rebuilt - (UINT64)(UINTN)Image->ImageBase
+          ));
+      }
+    }
+
     return;
   }
 
@@ -151,7 +176,7 @@ DefaultExceptionHandler (
 
   DEBUG ((DEBUG_ERROR, "EC   0x%lx ISS 0x%lx\n", (Context->ESR >> 26) & 0x3F, Context->ESR & 0x1FFFFFF));
 
-  ReportImageFor (Context->ELR);
+  ReportImageFor (Context->ELR, Context->FAR);
 
   DEBUG ((DEBUG_ERROR, "##### HALTED #####\n"));
   CpuDeadLoop ();
