@@ -1,0 +1,459 @@
+/** @file
+  AppleFbDebugLib: a DebugLib that draws on the framebuffer.
+
+  Everything here runs in contexts where nothing else is guaranteed: DxeCore
+  itself, dispatcher passes at TPL_APPLICATION, a driver mid-initialisation.
+  So it only ever touches memory it can compute from a fixed PCD -- no
+  protocols, no boot services, no allocation, no locks.
+
+  Output is white-on-black, one screen region, and scrolls. Only DEBUG() text
+  is drawn; the color pattern underneath is lost on purpose so that the log is
+  readable.
+
+  Copyright (c) 2026 Aurora Silicon
+  SPDX-License-Identifier: BSD-2-Clause-Patent
+**/
+
+#include <Uefi.h>
+
+#include <Library/BaseLib.h>
+#include <Library/BaseMemoryLib.h>
+#include <Library/CacheMaintenanceLib.h>
+#include <Library/DebugLib.h>
+#include <Library/PrintLib.h>
+
+#include "AppleFbDebugLib.h"
+
+//
+/// boot_args as m1n1 passes it. Only the leading fields are modelled; the
+/// struct is read through PcdBootArgsPointer, a fixed PCD, so it is available
+/// before any protocol or allocation exists.
+///
+typedef struct {
+  UINT16    Revision;
+  UINT16    Version;
+  UINT32    Pad0;
+  UINT64    VirtBase;
+  UINT64    PhysBase;
+  UINT64    MemSize;
+  UINT64    TopOfKernelData;
+  UINT64    VideoBase;
+  UINT64    VideoDisplay;
+  UINT64    VideoStride;
+  UINT64    VideoWidth;
+  UINT64    VideoHeight;
+  UINT64    VideoDepth;
+} APPLE_BOOT_ARGS;
+
+#define APPLE_FB_GLYPH_W   8
+#define APPLE_FB_GLYPH_H   19
+#define APPLE_FB_DEFAULT_SCALE  2
+
+STATIC struct {
+  volatile UINT32    *Base;
+  UINTN              Width;
+  UINTN              Height;
+  UINTN              StridePx;
+  UINTN              Scale;
+  UINTN              Cols;
+  UINTN              Rows;
+  UINTN              CurX;
+  UINTN              CurY;
+  BOOLEAN            Ready;
+  BOOLEAN            Probed;
+} mFb = { 0 };
+
+#define FB_CELL_W  (APPLE_FB_GLYPH_W * mFb.Scale)
+#define FB_CELL_H  (APPLE_FB_GLYPH_H * mFb.Scale)
+
+STATIC
+VOID
+FbPuts (
+  IN CONST CHAR8  *Text
+  );
+
+STATIC
+VOID
+FbPrintDec (
+  IN UINTN  Value
+  );
+
+STATIC
+VOID
+FbPrintHex (
+  IN UINTN  Value
+  );
+
+STATIC
+VOID
+FbFlush (
+  IN UINTN  Offset,
+  IN UINTN  Length
+  )
+{
+  WriteBackDataCacheRange ((VOID *)((UINTN)mFb.Base + Offset), Length);
+}
+
+/**
+  Work out where the framebuffer is and how big a character cell is.
+
+  Called from DebugPrint, so it must not recurse into anything that prints.
+**/
+STATIC
+VOID
+FbProbe (
+  VOID
+  )
+{
+  APPLE_BOOT_ARGS  *BootArgs;
+  UINTN            CellH;
+
+  if (mFb.Probed) {
+    return;
+  }
+
+  //
+  // Before DxeCore installs the system table there is no reason to believe the
+  // framebuffer is mapped the way DXE will map it. Stay silent until then.
+  //
+  if ((gST == NULL) && (gBS == NULL)) {
+    return;
+  }
+
+  mFb.Probed = TRUE;
+
+  BootArgs = (APPLE_BOOT_ARGS *)(UINTN)FixedPcdGet64 (PcdBootArgsPointer);
+  if (BootArgs == NULL) {
+    return;
+  }
+
+  if ((BootArgs->VideoBase == 0) || (BootArgs->VideoWidth < 640) ||
+      (BootArgs->VideoHeight < 480) || (BootArgs->VideoStride == 0) ||
+      ((BootArgs->VideoDepth & 0xFF) != 30 && (BootArgs->VideoDepth & 0xFF) != 32))
+  {
+    return;
+  }
+
+  mFb.Base     = (volatile UINT32 *)(UINTN)BootArgs->VideoBase;
+  mFb.Width    = (UINTN)BootArgs->VideoWidth;
+  mFb.Height   = (UINTN)BootArgs->VideoHeight;
+  mFb.StridePx = (UINTN)(BootArgs->VideoStride / 4);
+  mFb.Scale    = (mFb.Width >= 1280) ? APPLE_FB_DEFAULT_SCALE : 1;
+  mFb.Cols     = mFb.Width / (APPLE_FB_GLYPH_W * mFb.Scale);
+  mFb.Rows     = mFb.Height / (APPLE_FB_GLYPH_H * mFb.Scale);
+  mFb.CurX     = 0;
+  mFb.CurY     = 0;
+  mFb.Ready    = TRUE;
+
+  //
+  // Clear the text area and say what we found, so that a blank screen means
+  // "this library never ran" rather than "the log said nothing".
+  //
+  CellH = FB_CELL_H;
+  SetMem ((VOID *)mFb.Base, mFb.StridePx * 4 * CellH * mFb.Rows, 0);
+  FbFlush (0, mFb.StridePx * 4 * CellH * mFb.Rows);
+
+  FbPuts ("#### APPLE FB DEBUG CONSOLE ####\n");
+  FbPuts ("FB BASE 0x");
+  FbPrintHex ((UINTN)mFb.Base);
+  FbPuts (" ");
+  FbPrintDec (mFb.Width);
+  FbPuts ("X");
+  FbPrintDec (mFb.Height);
+  FbPuts (" STRIDE ");
+  FbPrintDec (mFb.StridePx);
+  FbPuts (" SCALE ");
+  FbPrintDec (mFb.Scale);
+  FbPuts ("\n");
+}
+
+STATIC
+VOID
+FbScroll (
+  VOID
+  )
+{
+  UINTN  LineBytes;
+  UINTN  CellH;
+
+  CellH     = FB_CELL_H;
+  LineBytes = mFb.StridePx * 4;
+
+  CopyMem (
+    (VOID *)mFb.Base,
+    (VOID *)((UINTN)mFb.Base + CellH * LineBytes),
+    (mFb.Rows - 1) * CellH * LineBytes
+    );
+  SetMem (
+    (VOID *)((UINTN)mFb.Base + (mFb.Rows - 1) * CellH * LineBytes),
+    CellH * LineBytes,
+    0
+    );
+  FbFlush (0, mFb.Rows * CellH * LineBytes);
+  mFb.CurY = mFb.Rows - 1;
+}
+
+STATIC
+VOID
+FbDrawGlyph (
+  IN CHAR8  Ch
+  )
+{
+  CONST APPLE_FB_GLYPH  *Glyph;
+  UINTN                 OriginX;
+  UINTN                 OriginY;
+  UINTN                 Col;
+  UINTN                 Row;
+  UINTN                 Py;
+  UINTN                 Px;
+  UINT32                Bits;
+
+  if ((UINT8)Ch < 0x20) {
+    Ch = ' ';
+  }
+
+  if ((UINT8)Ch > 0x7E) {
+    Ch = '?';
+  }
+
+  Glyph   = &mAppleFbGlyphs[(UINT8)Ch - 0x20];
+  OriginX = mFb.CurX * FB_CELL_W;
+  OriginY = mFb.CurY * FB_CELL_H;
+
+  for (Col = 0; Col < APPLE_FB_GLYPH_W; Col++) {
+    for (Row = 0; Row < APPLE_FB_GLYPH_H; Row++) {
+      Bits = Glyph->GlyphCol1[Row];
+      for (Px = 0; Px < mFb.Scale; Px++) {
+        for (Py = 0; Py < mFb.Scale; Py++) {
+          UINTN  X = OriginX + Col * mFb.Scale + Px;
+          UINTN  Y = OriginY + Row * mFb.Scale + Py;
+          mFb.Base[Y * mFb.StridePx + X] =
+            ((Bits >> Col) & 1) ? 0xFFFFFFFFu : 0x00000000u;
+        }
+      }
+    }
+  }
+
+  FbFlush (OriginY * mFb.StridePx * 4, FB_CELL_H * mFb.StridePx * 4);
+}
+
+STATIC
+VOID
+FbPutChar (
+  IN CHAR8  Ch
+  )
+{
+  if (!mFb.Ready) {
+    return;
+  }
+
+  if (Ch == '\r') {
+    return;
+  }
+
+  if (Ch == '\n') {
+    mFb.CurX = 0;
+    mFb.CurY++;
+    if (mFb.CurY >= mFb.Rows) {
+      FbScroll ();
+    }
+
+    return;
+  }
+
+  if ((Ch >= 'a') && (Ch <= 'z')) {
+    Ch = (CHAR8)(Ch - 'a' + 'A');
+  }
+
+  FbDrawGlyph (Ch);
+  mFb.CurX++;
+  if (mFb.CurX >= mFb.Cols) {
+    mFb.CurX = 0;
+    mFb.CurY++;
+    if (mFb.CurY >= mFb.Rows) {
+      FbScroll ();
+    }
+  }
+}
+
+STATIC
+VOID
+FbPuts (
+  IN CONST CHAR8  *Text
+  )
+{
+  while (*Text != '\0') {
+    FbPutChar (*Text++);
+  }
+}
+
+STATIC
+VOID
+FbPrintDec (
+  IN UINTN  Value
+  )
+{
+  CHAR8  Digits[24];
+  UINTN  Index;
+
+  if (Value == 0) {
+    FbPutChar ('0');
+    return;
+  }
+
+  Index = 0;
+  while ((Value != 0) && (Index < sizeof (Digits))) {
+    Digits[Index++] = (CHAR8)('0' + (Value % 10));
+    Value          /= 10;
+  }
+
+  while (Index > 0) {
+    FbPutChar (Digits[--Index]);
+  }
+}
+
+STATIC
+VOID
+FbPrintHex (
+  IN UINTN  Value
+  )
+{
+  STATIC CONST CHAR8  Hex[] = "0123456789ABCDEF";
+  UINTN               Shift;
+
+  Shift = sizeof (UINTN) * 8;
+  while (Shift > 4) {
+    Shift -= 4;
+    FbPutChar (Hex[(Value >> Shift) & 0xF]);
+  }
+
+  FbPutChar (Hex[Value & 0xF]);
+}
+
+UINTN
+EFIAPI
+DebugPrint (
+  IN UINTN        ErrorLevel,
+  IN CONST CHAR8  *Format,
+  ...
+  )
+{
+  VA_LIST  Marker;
+  CHAR8    Buffer[512];
+  UINTN    Length;
+
+  (VOID)ErrorLevel;
+  VA_START (Marker, Format);
+  Length = AsciiVSPrint (Buffer, sizeof (Buffer) - 1, Format, Marker);
+  VA_END (Marker);
+
+  FbProbe ();
+  FbPuts (Buffer);
+
+  return Length;
+}
+
+UINTN
+EFIAPI
+DebugVPrint (
+  IN UINTN        ErrorLevel,
+  IN CONST CHAR8  *Format,
+  IN VA_LIST      VaList
+  )
+{
+  CHAR8  Buffer[512];
+  UINTN  Length;
+
+  (VOID)ErrorLevel;
+  Length = AsciiVSPrint (Buffer, sizeof (Buffer) - 1, Format, VaList);
+
+  FbProbe ();
+  FbPuts (Buffer);
+
+  return Length;
+}
+
+UINTN
+EFIAPI
+DebugBPrint (
+  IN UINTN        ErrorLevel,
+  IN CONST CHAR8  *Format,
+  IN VA_LIST      VaList
+  )
+{
+  return DebugVPrint (ErrorLevel, Format, VaList);
+}
+
+VOID
+EFIAPI
+DebugAssert (
+  IN CONST CHAR8  *FileName,
+  IN UINTN        LineNumber,
+  IN CONST CHAR8  *Description
+  )
+{
+  FbProbe ();
+  FbPuts ("ASSERT ");
+  FbPuts (FileName);
+  FbPutChar (':');
+  FbPuts (Description);
+  FbPutChar ('\n');
+
+  CpuDeadLoop ();
+}
+
+BOOLEAN
+EFIAPI
+DebugAssertEnabled (
+  VOID
+  )
+{
+  return TRUE;
+}
+
+BOOLEAN
+EFIAPI
+DebugPrintEnabled (
+  VOID
+  )
+{
+  return TRUE;
+}
+
+BOOLEAN
+EFIAPI
+DebugCodeEnabled (
+  VOID
+  )
+{
+  return TRUE;
+}
+
+BOOLEAN
+EFIAPI
+DebugClearMemoryEnabled (
+  VOID
+  )
+{
+  return TRUE;
+}
+
+VOID *
+EFIAPI
+DebugClearMemory (
+  IN VOID   *Address,
+  IN UINTN  Length
+  )
+{
+  return SetMem (Address, Length, 0xAF);
+}
+
+BOOLEAN
+EFIAPI
+DebugPrintLevelEnabled (
+  IN CONST UINTN  ErrorLevel
+  )
+{
+  (VOID)ErrorLevel;
+  return TRUE;
+}

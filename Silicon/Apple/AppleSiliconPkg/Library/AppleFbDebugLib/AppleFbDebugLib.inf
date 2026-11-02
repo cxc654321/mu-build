@@ -1,0 +1,34 @@
+## @file
+#  DebugLib instance that renders DEBUG() output on the Apple framebuffer.
+#
+#  Copyright (c) 2026 Aurora Silicon
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+[Defines]
+  INF_VERSION    = 0x00010005
+  BASE_NAME      = AppleFbDebugLib
+  FILE_GUID      = 3f1d2b64-9c47-4f18-9a0e-6c2d5b7e8a31
+  MODULE_TYPE    = BASE
+  VERSION_STRING = 1.0
+  LIBRARY_CLASS  = DebugLib
+
+[Sources]
+  AppleFbDebugLib.c
+  AppleFbGlyphs.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  CacheMaintenanceLib
+  PcdLib
+  # UefiBootServicesTableLib exists only for gST/gBS. They are NULL in PrePi,
+  # which is exactly the gate this library wants: no framebuffer drawing until
+  # DXE owns the address space.
+  UefiBootServicesTableLib
+
+[FixedPcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer

@@ -124,7 +124,11 @@
 !include MdePkg/MdeLibs.dsc.inc
 
 [LibraryClasses.common]
-  DebugLib  |MdePkg/Library/BaseDebugLibSerialPort/BaseDebugLibSerialPort.inf
+  # BaseDebugLibSerialPort needs a UART nobody can reach on these machines:
+  # the dispatch log and every driver's DEBUG() went into nothing. Render them
+  # on the framebuffer instead (see Library/AppleFbDebugLib). Swap this line
+  # back to BaseDebugLibSerialPort when a board has a serial console.
+  DebugLib  |AppleSiliconPkg/Library/AppleFbDebugLib/AppleFbDebugLib.inf
   DebugPrintErrorLevelLib|MdePkg/Library/BaseDebugPrintErrorLevelLib/BaseDebugPrintErrorLevelLib.inf
 
   ImagePropertiesRecordLib|MdeModulePkg/Library/ImagePropertiesRecordLib/ImagePropertiesRecordLib.inf
