@@ -7,6 +7,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
 
 #include "AppleFbDebugLib.h"
+#include <Protocol/SimpleTextOut.h>
 
 APPLE_FB_GLYPH  mAppleFbGlyphs[] = {
   //
