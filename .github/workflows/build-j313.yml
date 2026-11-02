@@ -128,7 +128,9 @@ jobs:
           src = open(p).read()
           old = "#if NTASI_J813_PMCCNTR_EMULATION"
           if old in src:
-              src = src.replace(old, "#if 1 /* J313: heap-allocated EL0 exception stack */", 1)
+              # Both the declaration and the code that picks the stack are behind
+              # this macro; flipping only one leaves mNewStackBase undeclared.
+              src = src.replace(old, "#if 1 /* J313: heap-allocated EL0 exception stack */")
               open(p, "w").write(src)
               print("patched:", p)
           else:
