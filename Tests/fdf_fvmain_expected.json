@@ -223,6 +223,7 @@
         "INF MdeModulePkg/Universal/Acpi/AcpiTableDxe/AcpiTableDxe.inf",
         "INF AppleSiliconPkg/Drivers/AcpiPlatformDxe/AcpiPlatformDxe.inf",
         "INF MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf",
+        "INF RuleOverride=ACPITABLE AppleSiliconPkg/AcpiTables/GenericAcpiTables.inf",
         "INF RuleOverride=ACPITABLE $(PLATFORM_BOARD_PKG)/AcpiTables/DeviceAcpiTables.inf",
         "INF RuleOverride=ACPITABLE $(PLATFORM_SOC_PKG)/AcpiTables/CPUAcpiTables.inf",
         "INF AppleSiliconPkg/Drivers/SmbiosInfoDxe/SmbiosInfoDxe.inf",
