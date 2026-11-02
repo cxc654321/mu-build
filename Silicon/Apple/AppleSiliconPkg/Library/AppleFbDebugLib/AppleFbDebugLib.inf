@@ -24,6 +24,10 @@
   BaseLib
   BaseMemoryLib
   CacheMaintenanceLib
+  # AsciiVSPrint/AsciiBSPrint. BaseDebugLibSerialPort declared these too; this
+  # list dropped PrintLib in an early edit and every module that links through
+  # here failed at lld-link with "undefined symbol: AsciiVSPrint".
+  PrintLib
   PcdLib
 
 [FixedPcd]
