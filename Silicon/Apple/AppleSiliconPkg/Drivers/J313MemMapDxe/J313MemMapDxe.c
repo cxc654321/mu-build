@@ -27,6 +27,7 @@
 #include <Library/HobLib.h>
 #include <Library/PeCoffGetEntryPointLib.h>
 #include <Library/UefiBootServicesTableLib.h>
+#include <Library/UefiLib.h>
 
 #include <Pi/PiHob.h>
 
