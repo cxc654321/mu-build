@@ -471,7 +471,13 @@
 
 [LibraryClasses.common.DXE_CORE]
 
-  DebugAgentLib|DebuggerFeaturePkg/Library/DebugAgent/DebugAgentDxe.inf
+  # Mu's debug agent knows DEBUG_AGENT_INIT_DXE_CORE, 0 and DXE_CORE_LATE and
+  # complains about everything else:
+  #   InitializeDebugAgent: Unsupported call to DxeCore DebugAgent (0xD)
+  # 0xD is DEBUG_AGENT_INIT_REINITIALIZE, which the UI stack issues on entry.
+  # There is no debug transport on this machine anyway (no UART), so use the
+  # null agent: it calls the continuation function and returns.
+  DebugAgentLib|MdeModulePkg/Library/DebugAgentLibNull/DebugAgentLibNull.inf
   HobLib|MdePkg/Library/DxeCoreHobLib/DxeCoreHobLib.inf
   MemoryAllocationLib|MdeModulePkg/Library/DxeCoreMemoryAllocationLib/DxeCoreMemoryAllocationLib.inf
   DxeCoreEntryPoint|MdePkg/Library/DxeCoreEntryPoint/DxeCoreEntryPoint.inf
@@ -590,7 +596,13 @@
     NULL|MdeModulePkg/Library/DxeCrc32GuidedSectionExtractLib/DxeCrc32GuidedSectionExtractLib.inf
     NULL|MdeModulePkg/Library/LzmaCustomDecompressLib/LzmaCustomDecompressLib.inf
     DevicePathLib|MdePkg/Library/UefiDevicePathLib/UefiDevicePathLib.inf
-    DebugAgentLib|DebuggerFeaturePkg/Library/DebugAgent/DebugAgentDxe.inf
+    # Mu's debug agent knows DEBUG_AGENT_INIT_DXE_CORE, 0 and DXE_CORE_LATE and
+  # complains about everything else:
+  #   InitializeDebugAgent: Unsupported call to DxeCore DebugAgent (0xD)
+  # 0xD is DEBUG_AGENT_INIT_REINITIALIZE, which the UI stack issues on entry.
+  # There is no debug transport on this machine anyway (no UART), so use the
+  # null agent: it calls the continuation function and returns.
+  DebugAgentLib|MdeModulePkg/Library/DebugAgentLibNull/DebugAgentLibNull.inf
   }
 
   #
