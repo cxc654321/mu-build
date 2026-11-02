@@ -25,10 +25,6 @@
   BaseMemoryLib
   CacheMaintenanceLib
   PcdLib
-  # UefiBootServicesTableLib exists only for gST/gBS. They are NULL in PrePi,
-  # which is exactly the gate this library wants: no framebuffer drawing until
-  # DXE owns the address space.
-  UefiBootServicesTableLib
 
 [FixedPcd]
   gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer

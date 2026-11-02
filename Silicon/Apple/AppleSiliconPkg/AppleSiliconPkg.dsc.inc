@@ -563,6 +563,10 @@
   AppleSiliconPkg/PrePi/PrePi.inf {
     <LibraryClasses>
     SerialPortLib|AppleSiliconPkg/Library/AppleUartSerialPortLib/AppleUartSerialPortLib.inf
+    # PrePi still runs on m1n1's page tables; the video carveout is not
+    # guaranteed mapped there, and this machine has no UART to print to
+    # anyway. AppleFbDebugLib takes over from DxeCore onwards.
+    DebugLib|MdePkg/Library/BaseDebugLibNull/BaseDebugLibNull.inf
   }
 
   #

@@ -113,13 +113,11 @@ FbProbe (
   }
 
   //
-  // Before DxeCore installs the system table there is no reason to believe the
-  // framebuffer is mapped the way DXE will map it. Stay silent until then.
+  // PrePi (SEC) is kept on BaseDebugLibNull because it runs on m1n1's page
+  // tables, where the video carveout may not be mapped. Everything from DxeCore
+  // up shares the address space SimpleFbDxe later proves writable, so the first
+  // call here is already safe.
   //
-  if ((gST == NULL) && (gBS == NULL)) {
-    return;
-  }
-
   mFb.Probed = TRUE;
 
   BootArgs = (APPLE_BOOT_ARGS *)(UINTN)FixedPcdGet64 (PcdBootArgsPointer);
