@@ -45,7 +45,9 @@ ANCHORS = [
     (WM, 'Status = DriverInitStage2 (mImageHandle);', 'before', 'SWMTrace: stage2 from gop callback'),
     (WM, 'Status = gBS->InstallMultipleProtocolInterfaces (', 'before', 'SWMTrace: installing SWM protocol'),
     (WM, '// Create a periodic timer event for checking the Absolute Pointer protocol watchlist.', 'before', 'SWMTrace: SWM install call returned'),
-    (OSK_DRV, '[OSK]: Failed to find Simple Window Manager protocol', 'before', 'OSKTrace: SWM lookup failed'),
+    # OSK's failure line sits inside a multi-line DEBUG() call, so inserting a
+    # statement before it breaks the macro invocation. Entry print is enough.
+
 ]
 
 
