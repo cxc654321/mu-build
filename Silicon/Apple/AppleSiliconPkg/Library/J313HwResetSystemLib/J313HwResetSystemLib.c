@@ -21,12 +21,19 @@
 #include <Library/BaseLib.h>
 #include <Library/DebugLib.h>
 
+//
+// Say out loud that this library is in the image: if even this line does not
+// show up, the DSC mapping never took effect and nothing here is reachable.
+//
+STATIC UINT32  mResetRequests = 0;
+
 STATIC
 VOID
 Refuse (
   IN CONST CHAR8  *Which
   )
 {
+  mResetRequests++;
   //
   // Refuse the reset and hand control back to the caller.
   //
@@ -42,7 +49,7 @@ Refuse (
   // costs one reboot's worth of state at worst; the alternative is never
   // reaching the boot manager at all.
   //
-  DEBUG ((DEBUG_ERROR, "\n##### RESET REQUESTED (%a) -- IGNORED, CONTINUING #####\n", Which));
+  DEBUG ((DEBUG_ERROR, "\nHWRS: %a requested (#%d) -- IGNORED, CONTINUING\n", Which, (UINT32)mResetRequests));
   DEBUG ((DEBUG_ERROR, "No PSCI monitor here; see J313HwResetSystemLib.\n"));
 }
 
@@ -91,5 +98,6 @@ J313HwResetSystemLibConstructor (
   VOID
   )
 {
+  DEBUG ((DEBUG_ERROR, "HWRS: J313HwResetSystemLib constructor ran\n"));
   return RETURN_SUCCESS;
 }

@@ -149,6 +149,30 @@ jobs:
           stuart_build -c "Platform/$PLATFORM/PlatformBuild.py" \
             TOOL_CHAIN_TAG=CLANGPDB TARGET=$BUILD_TARGET
 
+      - name: Find which module prints the memory type message
+        if: always()
+        run: |
+          set -eu
+          echo "== modules containing 'MEMORY TYPE INFORMATION' =="
+          found=0
+          while IFS= read -r f; do
+            if strings -a "$f" | grep -q "MEMORY TYPE INFORMATION"; then
+              echo "HIT(memory type): $f"
+              found=1
+            fi
+          done < <(find Build -type f \( -name '*.efi' -o -name '*.dll' \) 2>/dev/null)
+          echo "memory-type hits: $found"
+
+          echo "== modules containing 'WARM RESET' =="
+          while IFS= read -r f; do
+            if strings -a "$f" | grep -q "WARM RESET"; then
+              echo "HIT(warm reset): $f"
+            fi
+          done < <(find Build -type f \( -name '*.efi' -o -name '*.dll' \) 2>/dev/null)
+
+          echo "== which reset libraries ended up in ResetSystemRuntimeDxe =="
+          strings -a $(find Build -name 'ResetSystemRuntimeDxe.efi' | head -1) | grep -i "HWRS\|PSCI\|RESET UNSUPPORTED" | head -10 || true
+
       - name: Disassemble the crash site
         if: always()
         run: |
