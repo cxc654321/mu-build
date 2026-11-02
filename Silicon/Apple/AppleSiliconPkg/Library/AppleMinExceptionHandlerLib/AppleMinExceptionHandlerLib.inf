@@ -1,0 +1,23 @@
+## @file
+#  Minimal DefaultExceptionHandlerLib: print ELR/ESR/FAR and stop.
+#
+#  Copyright (c) 2026 Aurora Silicon
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+[Defines]
+  INF_VERSION    = 0x00010005
+  BASE_NAME      = AppleMinExceptionHandlerLib
+  FILE_GUID      = 2a5c9e14-77b3-4c8f-9e10-5f3d8b2a6c41
+  MODULE_TYPE    = BASE
+  VERSION_STRING = 1.0
+  LIBRARY_CLASS  = DefaultExceptionHandlerLib|DXE_CORE DXE_DRIVER
+
+[Sources]
+  AppleMinExceptionHandlerLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  BaseLib
+  DebugLib

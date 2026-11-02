@@ -201,7 +201,10 @@
 
   # ARM Architectural Libraries
   CacheMaintenanceLib|ArmPkg/Library/ArmCacheMaintenanceLib/ArmCacheMaintenanceLib.inf
-  DefaultExceptionHandlerLib|ArmPkg/Library/DefaultExceptionHandlerLib/DefaultExceptionHandlerLib.inf
+  # ArmPkg's handler walks the debug image table and prints a full dump; on
+  # this machine it took an exception of its own and ASSERTed, hiding the fault
+  # it was called for. Ours prints ELR/ESR/FAR and halts.
+  DefaultExceptionHandlerLib|AppleSiliconPkg/Library/AppleMinExceptionHandlerLib/AppleMinExceptionHandlerLib.inf
   CpuExceptionHandlerLib|ArmPkg/Library/ArmExceptionLib/ArmExceptionLib.inf
   ArmHvcLib|ArmPkg/Library/ArmHvcLib/ArmHvcLib.inf
   #
