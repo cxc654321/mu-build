@@ -350,7 +350,7 @@ FbPrintHex (
   FbPutChar (Hex[Value & 0xF]);
 }
 
-UINTN
+VOID
 EFIAPI
 DebugPrint (
   IN UINTN        ErrorLevel,
@@ -360,20 +360,17 @@ DebugPrint (
 {
   VA_LIST  Marker;
   CHAR8    Buffer[512];
-  UINTN    Length;
 
   (VOID)ErrorLevel;
   VA_START (Marker, Format);
-  Length = AsciiVSPrint (Buffer, sizeof (Buffer) - 1, Format, Marker);
+  AsciiVSPrint (Buffer, sizeof (Buffer) - 1, Format, Marker);
   VA_END (Marker);
 
   FbProbe ();
   FbPuts (Buffer);
-
-  return Length;
 }
 
-UINTN
+VOID
 EFIAPI
 DebugVPrint (
   IN UINTN        ErrorLevel,
@@ -382,26 +379,29 @@ DebugVPrint (
   )
 {
   CHAR8  Buffer[512];
-  UINTN  Length;
 
   (VOID)ErrorLevel;
-  Length = AsciiVSPrint (Buffer, sizeof (Buffer) - 1, Format, VaList);
+  AsciiVSPrint (Buffer, sizeof (Buffer) - 1, Format, VaList);
 
   FbProbe ();
   FbPuts (Buffer);
-
-  return Length;
 }
 
-UINTN
+VOID
 EFIAPI
 DebugBPrint (
   IN UINTN        ErrorLevel,
   IN CONST CHAR8  *Format,
-  IN VA_LIST      VaList
+  IN BASE_LIST    BaseListMarker
   )
 {
-  return DebugVPrint (ErrorLevel, Format, VaList);
+  CHAR8  Buffer[512];
+
+  (VOID)ErrorLevel;
+  AsciiBSPrint (Buffer, sizeof (Buffer) - 1, Format, BaseListMarker);
+
+  FbProbe ();
+  FbPuts (Buffer);
 }
 
 VOID
