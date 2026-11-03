@@ -19,6 +19,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 #include <Guid/DfciPacketHeader.h>
 
 #include <Protocol/OnScreenKeyboard.h>
+#include <Protocol/SimpleWindowManager.h>
 #include <Protocol/TpmPpProtocol.h>
 
 #include <Library/BaseMemoryLib.h>
@@ -53,6 +54,85 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 
 #include <Settings/BootMenuSettings.h>
 #include <Settings/DfciSettings.h>
+
+// SWM boot gate: 100 ms timer ticks, at most two seconds of timer waiting.
+// A platform build may shorten the budget, but must not extend it past 2 s.
+#define SWM_BOOT_GATE_PERIOD_100NS  1000000ULL
+#ifndef SWM_BOOT_GATE_MAX_TICKS
+#define SWM_BOOT_GATE_MAX_TICKS     20
+#endif
+#if (SWM_BOOT_GATE_MAX_TICKS < 1) || (SWM_BOOT_GATE_MAX_TICKS > 20)
+#error SWM_BOOT_GATE_MAX_TICKS must be between 1 and 20
+#endif
+
+/**
+  Wait only on UI entry paths, without starving SWM's TPL_CALLBACK probe.
+
+  SWM is published during Stage2, before Stage2 returns. At TPL_APPLICATION
+  that callback has completed for the J313 synchronous GOP/SRE handoff. This
+  gates protocol availability, not a private readiness contract: Stage2 must
+  succeed or withdraw SWM on failure. Failed withdrawal can leave stale SWM.
+  Never wait at callback TPL or above.
+  The budget bounds timer waits, not time spent executing firmware callbacks.
+**/
+STATIC
+EFI_STATUS
+WaitForSwmReady (
+  VOID
+  )
+{
+  EFI_STATUS                         Status;
+  EFI_STATUS                         CloseStatus;
+  EFI_EVENT                          TimerEvent;
+  UINTN                              Index;
+  UINTN                              Tick;
+  MS_SIMPLE_WINDOW_MANAGER_PROTOCOL  *Swm;
+
+  // UefiLib samples with RaiseTPL (TPL_HIGH_LEVEL), then immediately restores.
+  if (EfiGetCurrentTpl () != TPL_APPLICATION) {
+    return EFI_UNSUPPORTED;
+  }
+
+  Status = gBS->LocateProtocol (&gMsSWMProtocolGuid, NULL, (VOID **)&Swm);
+  if (Status != EFI_NOT_FOUND) {
+    return Status;
+  }
+
+  TimerEvent = NULL;
+  Status = gBS->CreateEvent (EVT_TIMER, TPL_APPLICATION, NULL, NULL, &TimerEvent);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Status = gBS->SetTimer (TimerEvent, TimerPeriodic, SWM_BOOT_GATE_PERIOD_100NS);
+  if (!EFI_ERROR (Status)) {
+    for (Tick = 0; Tick < SWM_BOOT_GATE_MAX_TICKS; Tick++) {
+      Status = gBS->WaitForEvent (1, &TimerEvent, &Index);
+      if (EFI_ERROR (Status)) {
+        break;
+      }
+
+      Status = gBS->LocateProtocol (&gMsSWMProtocolGuid, NULL, (VOID **)&Swm);
+      if (Status != EFI_NOT_FOUND) {
+        break;
+      }
+    }
+
+    if (Status == EFI_NOT_FOUND) {
+      Status = EFI_TIMEOUT;
+    }
+  }
+
+  // Closing also cancels the periodic timer; every successfully created event
+  // takes this path, including SetTimer/WaitForEvent/LocateProtocol failures.
+  CloseStatus = gBS->CloseEvent (TimerEvent);
+  if (EFI_ERROR (CloseStatus)) {
+    DEBUG ((DEBUG_ERROR, "%a: timer close failed (%r), gate status %r\n", __FUNCTION__, CloseStatus, Status));
+    return CloseStatus;
+  }
+
+  return Status;
+}
 
 static EFI_EVENT  mPreReadyToBootEvent;
 static EFI_EVENT  mPostReadyToBootEvent;
@@ -1152,6 +1232,12 @@ DeviceBootManagerPriorityBoot (
   } else if (FrontPageBoot) {
     // Front Page Boot Option
     DEBUG ((DEBUG_INFO, "[Bds] enter Front Page\n"));
+    Status = WaitForSwmReady ();
+    if (EFI_ERROR (Status)) {
+      DEBUG ((DEBUG_ERROR, "%a: SWM boot gate failed (%r)\n", __FUNCTION__, Status));
+      return Status;
+    }
+
     Status = MsBootOptionsLibGetBootManagerMenu (BootOption, "VOL+");
     SetRebootReason (OEM_REBOOT_TO_SETUP_KEY);
   } else {
@@ -1197,10 +1283,15 @@ DeviceBootManagerUnableToBoot (
   // option until the variable store is actually backed by something persistent.
   // Revisit if/when that lands.
   //
+  Status = WaitForSwmReady ();
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "%a: SWM boot gate failed (%r)\n", __FUNCTION__, Status));
+    return;
+  }
+
   Status = MsBootOptionsLibGetBootManagerMenu (&BootManagerMenu, NULL);
   if (EFI_ERROR (Status)) {
-    DEBUG ((DEBUG_ERROR, "%a: no Boot Manager Menu option (%r), falling back to reset\n", __FUNCTION__, Status));
-    RebootToFrontPage ();
+    DEBUG ((DEBUG_ERROR, "%a: no Boot Manager Menu option (%r)\n", __FUNCTION__, Status));
     return;
   }
 

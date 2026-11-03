@@ -38,6 +38,7 @@
   BaseMemoryLib
   DevicePathLib
   UefiBootServicesTableLib
+  UefiLib
   UefiRuntimeServicesTableLib
   MsPlatformDevicesLib
   MsNetworkDependencyLib

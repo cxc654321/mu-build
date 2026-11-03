@@ -18,12 +18,14 @@ on:
         description: 'DEBUG or RELEASE'
         default: DEBUG
   push:
-    branches: [ main ]
+    branches: [ main, test/j313-swm-readiness-20261103 ]
     paths:
       - 'Platform/MacBookAirMid2020Pkg/**'
       - 'Silicon/Apple/**'
       - 'Platform/Features.py'
-      - 'Tools/ui-trace.py'
+      - 'Tools/swm-readiness.py'
+      - 'Tests/test_swm_readiness.py'
+      - 'Tests/*swm*'
       - '.github/workflows/build-j313.yml'
 
 permissions:
@@ -48,7 +50,8 @@ jobs:
           # "Invalid file path: ArmPkg/Library/ArmMmuLib/ArmMmuBaseLib.inf"
           # and the OverrideValidation plugin then died on a None path.
           submodules: recursive
-          fetch-depth: 1
+          # Handoff regression compares against the pre-handoff baseline.
+          fetch-depth: 0
 
       - name: Install system dependencies
         run: |
@@ -138,10 +141,14 @@ jobs:
               print("pattern not found; ArmExceptionLib unchanged")
           PY
 
-      - name: Instrument the UI chain
-        # One boot should say which link of GOP -> SRE -> SWM -> OSK -> THEME
-        # -> FrontPage is missing. See Tools/ui-trace.py.
-        run: python3 Tools/ui-trace.py
+      - name: Validate and apply SWM readiness fix
+        # Run on pristine pinned submodules. Do not apply the legacy ui-trace
+        # transformation (DXE_DRIVER / GOP-only retry) in this build.
+        run: |
+          python3 -B Tests/test_j313_sre_handoff.py
+          python3 -B Tests/test_swm_boot_gate.py
+          SWM_SOURCE_TREE="$PWD" python3 -B Tests/test_swm_readiness.py
+          python3 Tools/swm-readiness.py --tree "$PWD" --apply
 
       - name: stuart_build
         id: build
