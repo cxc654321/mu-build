@@ -566,7 +566,7 @@ AppleSpiHidDxeInitialize (
   // that only moves when a report is pending differs. Either answer is useful,
   // and neither needs a long poll loop.
   //
-  SpiHold (2000, "A: controller programmed, baseline transfer follows");
+  DEBUG ((DEBUG_ERROR, "SPIHID: A: baseline transfer, hands off the trackpad\n"));
 
   DistinctA = SpiProbeOnce ("baseline", TxBuf, RxBuf);
 
@@ -593,8 +593,6 @@ AppleSpiHidDxeInitialize (
   FreePool (RxBuf);
 
   DEBUG ((DEBUG_ERROR, "SPIHID: ===== end of stage 2 =====\n"));
-
-  SpiHold (15000, "C: holding 15 s so this screen can be read or photographed");
 
   return EFI_SUCCESS;
 }
