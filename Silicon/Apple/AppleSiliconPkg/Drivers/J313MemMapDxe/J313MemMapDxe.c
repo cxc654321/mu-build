@@ -451,6 +451,12 @@ OnReadyToBoot (
             (Chain & BIT3) ? 1 : 0, (Chain & BIT4) ? 1 : 0, (Chain & BIT5) ? 1 : 0));
   }
 
+  //
+  // BDS arms the watchdog per boot option; disarm it again so the hold below
+  // and whatever follows cannot be cut short by a reset request.
+  //
+  gBS->SetWatchdogTimer (0, 0, 0, NULL);
+
   DEBUG ((DEBUG_ERROR, "HOLDING 15s FOR THE CAMERA\n"));
   gBS->Stall (15 * 1000 * 1000);
 
@@ -468,6 +474,24 @@ J313MemMapDxeInitialize (
   EFI_STATUS  Status;
 
   PointSpEl0AtOurStack ();
+
+  //
+  // Disarm the platform watchdog for the whole boot.
+  //
+  // DxeCore arms the architectural watchdog from
+  // PcdWatchdogTimerDefault (300 s) and BDS re-arms it per boot option. Five
+  // minutes is shorter than a bring-up session and, because this platform's
+  // HwResetSystemLib only reports a reset request instead of performing one,
+  // the expiry leaves the machine parked mid-flow:
+  //
+  //   WATCHDOG TIMER RESETTING SYSTEM
+  //
+  // There is nothing to protect here: no OS is running and an unattended hang
+  // is visible on the panel anyway. Turn it off once, and again at ReadyToBoot
+  // in case BDS set it back.
+  //
+  gBS->SetWatchdogTimer (0, 0, 0, NULL);
+
   ReportMemoryMap ();
   ReportMemoryHobs ();
 

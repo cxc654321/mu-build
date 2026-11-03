@@ -170,10 +170,17 @@ jobs:
           echo "memory-type hits: $found"
 
           echo "== SWM trace strings in the built window manager =="
+          for WMDLL in $(find Build -name 'SimpleWindowManagerDxe.*' 2>/dev/null); do
+            echo "candidate: $WMDLL"
+          done
           WMDLL=$(find Build -name 'SimpleWindowManagerDxe.dll' 2>/dev/null | head -1)
+          if [ -z "$WMDLL" ]; then
+            WMDLL=$(find Build -type f -name '*.dll' 2>/dev/null | xargs -r grep -l "SWMTrace" 2>/dev/null | head -1 || true)
+          fi
           echo "swm dll=$WMDLL"
           if [ -n "$WMDLL" ]; then
-            strings -a "$WMDLL" | grep -i "SWMTrace\|notifying on SRE" | sort -u | head -12 || true
+            echo "SWMTrace string count: $(strings -a "$WMDLL" | grep -c 'SWMTrace' || true)"
+            strings -a "$WMDLL" | grep -i "SWMTrace\|UI: SWM entry" | sort -u | head -12 || true
           fi
 
           echo "== modules containing 'WARM RESET' =="
