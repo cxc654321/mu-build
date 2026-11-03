@@ -51,6 +51,45 @@ ANCHORS = [
 ]
 
 
+#
+# The fix this instrumentation exists to test.
+#
+# DriverInit() either finds GOP on the console handle (then stage two runs
+# immediately) or registers a protocol notify for GOP and returns. The callback
+# then locates GOP *and* SRE and bails out silently if SRE is missing. SRE is
+# published by RenderingEngineDxe, which installs GOP and SRE one after the
+# other: the notify fires on the GOP install, at which point SRE is not there
+# yet, the callback does "mGop = NULL; goto Exit;", and no further GOP install
+# ever happens -- so gMsSWMProtocol is never published and FrontPage reports
+# "Failed to find the Window Manager Protocol".
+#
+# Registering the same event for SRE as well makes the callback run once more
+# when SRE appears, which is the moment it can actually succeed.
+#
+NOTIFY_OLD = (
+    'Status = gBS->RegisterProtocolNotify (' + chr(10) +
+    '                  &gEfiGraphicsOutputProtocolGuid,' + chr(10) +
+    '                  mGopRegisterEvent,' + chr(10) +
+    '                  &mGopRegistration' + chr(10) +
+    '                  );'
+)
+
+NOTIFY_NEW = NOTIFY_OLD + chr(10) + chr(10) + dbg('SWMTrace: also notifying on SRE install') + chr(10) + (
+    '  gBS->RegisterProtocolNotify (&gMsSREProtocolGuid, mGopRegisterEvent, &mGopRegistration);'
+)
+
+
+def patch_notify(path):
+    if not os.path.exists(path):
+        return False
+    src = open(path).read()
+    if NOTIFY_OLD not in src:
+        return False
+    src = src.replace(NOTIFY_OLD, NOTIFY_NEW, 1)
+    open(path, 'w').write(src)
+    return True
+
+
 def patch_entry(path, func, tag):
     lines = open(path).read().split(chr(10))
     for i, line in enumerate(lines):
@@ -110,6 +149,8 @@ def main():
             continue
         ok = patch_install(path, tag)
         print('UI trace: install ' + tag + (' ok' if ok else ' NOT patched'))
+    ok = patch_notify(WM)
+    print('UI trace: SRE notify patch ' + ('ok' if ok else 'NOT patched'))
     for path, anchor, where, text in ANCHORS:
         ok = patch_anchor(path, anchor, where, text)
         print('UI trace: anchor ' + text + (' ok' if ok else ' NOT patched'))
