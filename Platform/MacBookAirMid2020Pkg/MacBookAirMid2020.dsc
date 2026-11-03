@@ -91,7 +91,19 @@
   # is what every earlier round ran.
   #
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishBlockIo|FALSE
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPerformDxeBringUp|FALSE
+  #
+  # Step one of two for internal storage: let the driver actually run its
+  # ANS/RTKit bring-up, but still withhold Block I/O. Nothing can file-system
+  # mount yet -- that needs PcdAppleAnsPublishBlockIo -- so a boot that gets
+  # further here is a bring-up that did not fault, which is the thing worth
+  # learning before publishing anything to BDS.
+  #
+  # History: this was turned off on 2026-07-30 after a Windows BUGCODE_USB3_DRIVER
+  # 0x144 that only went away with ANS bring-up disabled. That was a different
+  # tree, an OS-side handoff, and six boots of evidence; here it is about
+  # reaching the boot manager at all.
+  #
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPerformDxeBringUp|TRUE
   gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPreserveForOs|FALSE
 
   #

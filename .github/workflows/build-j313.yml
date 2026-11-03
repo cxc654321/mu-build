@@ -169,6 +169,13 @@ jobs:
           done < <(find Build -type f \( -name '*.efi' -o -name '*.dll' \) 2>/dev/null)
           echo "memory-type hits: $found"
 
+          echo "== SWM trace strings in the built window manager =="
+          WMDLL=$(find Build -name 'SimpleWindowManagerDxe.dll' 2>/dev/null | head -1)
+          echo "swm dll=$WMDLL"
+          if [ -n "$WMDLL" ]; then
+            strings -a "$WMDLL" | grep -i "SWMTrace\|notifying on SRE" | sort -u | head -12 || true
+          fi
+
           echo "== modules containing 'WARM RESET' =="
           while IFS= read -r f; do
             if strings -a "$f" | grep -q "WARM RESET"; then
