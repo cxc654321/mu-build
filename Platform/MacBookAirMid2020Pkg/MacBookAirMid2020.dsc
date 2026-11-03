@@ -90,7 +90,15 @@
   # enable bits; leaving them FALSE restores "discovery and report only", which
   # is what every earlier round ran.
   #
-  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishBlockIo|FALSE
+  #
+  # Step two of two: publish Block I/O as well, so PartitionDxe/Fat can mount
+  # something. Without this BDS only ever finds the memory-mapped FV and prints
+  #
+  #   MSBOOTPOLICYENTRY: INTERNAL FILESYSTEM UNAVAILABLE
+  #   FOUND 2 HANDLES ... SELECTING DEVICE MEMORYMAPPED
+  #   USB BOOT DESIRED, BUT NO USB DEVICES FOUND ON FIRST ATTEMPT
+  #
+  gAppleSiliconPkgTokenSpaceGuid.PcdAppleAnsPublishBlockIo|TRUE
   #
   # Step one of two for internal storage: let the driver actually run its
   # ANS/RTKit bring-up, but still withhold Block I/O. Nothing can file-system

@@ -79,6 +79,28 @@ NOTIFY_NEW = NOTIFY_OLD + chr(10) + chr(10) + dbg('SWMTrace: also notifying on S
 )
 
 
+#
+# SimpleWindowManagerDxe ships as UEFI_DRIVER. BDS reaches the boot menu before
+# the boot manager ever connects controllers, and BootMenu locates
+# gMsSWMProtocol directly, so a driver that waits to be bound publishes too
+# late. DXE_DRIVER makes the dispatcher start it in its own pass, which is what
+# status quo ante wanted anyway -- it has no depex and no binding needs.
+#
+SWM_INF = ROOT + 'SimpleWindowManagerDxe/SimpleWindowManagerDxe.inf'
+
+
+def patch_module_type(path):
+    if not os.path.exists(path):
+        return False
+    lines = open(path).read().split(chr(10))
+    for i, line in enumerate(lines):
+        if line.strip().startswith('MODULE_TYPE') and 'UEFI_DRIVER' in line:
+            lines[i] = line.replace('UEFI_DRIVER', 'DXE_DRIVER')
+            open(path, 'w').write(chr(10).join(lines))
+            return True
+    return False
+
+
 def patch_notify(path):
     if not os.path.exists(path):
         return False
@@ -149,6 +171,8 @@ def main():
             continue
         ok = patch_install(path, tag)
         print('UI trace: install ' + tag + (' ok' if ok else ' NOT patched'))
+    ok = patch_module_type(SWM_INF)
+    print('UI trace: SWM MODULE_TYPE -> DXE_DRIVER ' + ('ok' if ok else 'NOT patched'))
     ok = patch_notify(WM)
     print('UI trace: SRE notify patch ' + ('ok' if ok else 'NOT patched'))
     for path, anchor, where, text in ANCHORS:
