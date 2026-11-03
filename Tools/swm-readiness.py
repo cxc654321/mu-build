@@ -311,6 +311,11 @@ def replace_once(source, old, new):
 
 def transform(source):
     source = source.replace("\r\n", "\n")
+    # Fail-stop deliberately retains providers; remove its now-unreachable free helper.
+    unused = re.compile(r"(?ms)^static EFI_STATUS\nFreeAbsolutePointerInterfaceWatchList \(\n.*?^}\n")
+    if len(unused.findall(source)) != 1:
+        raise ValueError("missing/ambiguous watchlist cleanup definition")
+    source = unused.sub("", source, count=1)
     source = replace_once(source, 'VOID                           *mGopRegistration;\n',
                           'VOID                           *mGopRegistration;\n' + GLOBALS)
     for name, replacement in (("GopRegisteredCallback", CALLBACK), ("DriverInit", ENTRY)):
@@ -333,7 +338,7 @@ def patch_tree(tree, apply=False):
             raise ValueError(f"unsupported upstream {name}; no writes")
     original = raw["WindowManager.c"].decode("utf-8")
     if MARKER in original:
-        if digest(raw["WindowManager.c"]) != "69f6d5d30e888ed1f289eeeb428dbc5f54db835d95062ae73a0af5dcd514e2bb":
+        if digest(raw["WindowManager.c"]) != "31ca194d846e28aee971323bc9626d9bd79917fb83e7ca1f9c705d991763aacf":
             raise ValueError("modified patch; no writes")
         return "already patched"
     if digest(raw["WindowManager.c"]) != HASHES["WindowManager.c"]:

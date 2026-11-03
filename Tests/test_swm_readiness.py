@@ -195,6 +195,7 @@ class SwmReadinessTests(unittest.TestCase):
             self.assertEqual((directory / "WindowManager.c").read_bytes(), self.raw["WindowManager.c"])
             self.assertEqual(patch.patch_tree(tree, True), "patched")
             first=(directory / "WindowManager.c").read_bytes()
+            self.assertNotIn(b"FreeAbsolutePointerInterfaceWatchList", first)
             self.assertEqual(patch.patch_tree(tree, True), "already patched")
             self.assertEqual(first,(directory / "WindowManager.c").read_bytes())
             for name in ("WindowManager.h", "SimpleWindowManagerDxe.inf"):
