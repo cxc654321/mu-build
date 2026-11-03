@@ -93,12 +93,24 @@ def patch_module_type(path):
     if not os.path.exists(path):
         return False
     lines = open(path).read().split(chr(10))
+    changed = False
     for i, line in enumerate(lines):
         if line.strip().startswith('MODULE_TYPE') and 'UEFI_DRIVER' in line:
             lines[i] = line.replace('UEFI_DRIVER', 'DXE_DRIVER')
-            open(path, 'w').write(chr(10).join(lines))
-            return True
-    return False
+            changed = True
+            break
+    if not changed:
+        return False
+    #
+    # A DXE_DRIVER must carry a depex; the original INF has none because
+    # UEFI_DRIVER does not need one. TRUE matches what the dispatcher did with
+    # it before (start in its first pass).
+    #
+    body = chr(10).join(lines)
+    if '[Depex]' not in body:
+        body += chr(10) + '[Depex]' + chr(10) + '  TRUE' + chr(10)
+    open(path, 'w').write(body)
+    return True
 
 
 def patch_notify(path):
