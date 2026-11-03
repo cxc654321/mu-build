@@ -393,6 +393,84 @@ DumpBytes (
 }
 
 /**
+  Print a labelled pause and hold the CPU there.
+
+  There is no serial console on this machine, so the panel is the only output.
+  Every stage that a human has to act on or read gets an explicit hold; nothing
+  else in this driver waits on a timeout longer than the transfer itself.
+**/
+STATIC
+VOID
+SpiHold (
+  IN UINTN        Milliseconds,
+  IN CONST CHAR8  *What
+  )
+{
+  DEBUG ((DEBUG_ERROR, "SPIHID: >>> %a (%u ms)\n", What, (UINT32)Milliseconds));
+  gBS->Stall ((UINT32)Milliseconds * 1000);
+}
+
+/**
+  One transfer, then report what came back.
+
+  @retval distinct  Number of bytes differing from the first one, or MAX_UINTN
+                    when the transfer failed.
+**/
+STATIC
+UINTN
+SpiProbeOnce (
+  IN CONST CHAR8  *Label,
+  IN UINT8        *Tx,
+  IN UINT8        *Rx
+  )
+{
+  EFI_STATUS  Status;
+  UINTN       Index;
+  UINTN       Distinct;
+  UINT8       First;
+
+  ZeroMem (Rx, SPI_TRANSFER_LEN);
+
+  Status = SpiTransfer (Tx, Rx, SPI_TRANSFER_LEN);
+  DEBUG ((
+    DEBUG_ERROR,
+    "SPIHID: [%a] transfer %r FIFOSTAT=0x%08x IF_XFER=0x%08x IF_FIFO=0x%08x\n",
+    Label,
+    Status,
+    SpiRead (SPI_FIFOSTAT),
+    SpiRead (SPI_IF_XFER),
+    SpiRead (SPI_IF_FIFO)
+    ));
+
+  if (EFI_ERROR (Status)) {
+    return MAX_UINTN;
+  }
+
+  First    = Rx[0];
+  Distinct = 0;
+  for (Index = 0; Index < SPI_TRANSFER_LEN; Index++) {
+    if (Rx[Index] != First) {
+      Distinct++;
+    }
+  }
+
+  DEBUG ((
+    DEBUG_ERROR,
+    "SPIHID: [%a] MISO first=0x%02x distinct=%u/%u\n",
+    Label,
+    First,
+    (UINT32)Distinct,
+    (UINT32)SPI_TRANSFER_LEN
+    ));
+
+  if (Distinct != 0) {
+    DumpBytes (Rx, 64);
+  }
+
+  return Distinct;
+}
+
+/**
   Locate, program and probe the SPI-HID transport. See the file header.
 **/
 EFI_STATUS
@@ -409,13 +487,9 @@ AppleSpiHidDxeInitialize (
   dt_node_t   *SpiNode;
   UINT8       *TxBuf;
   UINT8       *RxBuf;
-  UINT32      FifoStat;
-  UINT32      IfXfer;
-  UINT32      IfFifo;
   UINT32      Ctrl;
-  UINTN       Index;
-  UINTN       Distinct;
-  UINT8       First;
+  UINTN       DistinctA;
+  UINTN       DistinctB;
 
   DEBUG ((DEBUG_ERROR, "SPIHID: ===== SPI-HID transport, stage 2: controller + raw transfer =====\n"));
 
@@ -480,64 +554,47 @@ AppleSpiHidDxeInitialize (
 
     return EFI_SUCCESS;
   }
-
   //
-  // Clock one buffer through. The payload is not a real SPI-HID request yet --
-  // this is the measure-first step: if MISO returns anything structured, the
-  // framing can be read off the dump instead of guessed from another OS.
+  // Three short phases, each with its own pause, because the panel is the only
+  // output and the two dumps have to be tellable apart in a photograph.
   //
-  DEBUG ((DEBUG_ERROR, "SPIHID: transferring %u bytes at %u Hz\n", SPI_TRANSFER_LEN, SPI_BUS_HZ));
+  //   A  baseline, hands off the trackpad
+  //   B  same transfer again, after the operator has touched the trackpad
+  //   C  hold, so the result can be read and photographed
+  //
+  // A probe that answers regardless of touch produces the same bytes twice; one
+  // that only moves when a report is pending differs. Either answer is useful,
+  // and neither needs a long poll loop.
+  //
+  SpiHold (2000, "A: controller programmed, baseline transfer follows");
 
-  Status = SpiTransfer (TxBuf, RxBuf, SPI_TRANSFER_LEN);
+  DistinctA = SpiProbeOnce ("baseline", TxBuf, RxBuf);
 
-  FifoStat = SpiRead (SPI_FIFOSTAT);
-  IfXfer   = SpiRead (SPI_IF_XFER);
-  IfFifo   = SpiRead (SPI_IF_FIFO);
+  SpiHold (6000, "B: TOUCH THE TRACKPAD NOW");
 
-  DEBUG ((
-    DEBUG_ERROR,
-    "SPIHID: after transfer status=%r FIFOSTAT=0x%08x IF_XFER=0x%08x IF_FIFO=0x%08x\n",
-    Status,
-    FifoStat,
-    IfXfer,
-    IfFifo
-    ));
+  DistinctB = SpiProbeOnce ("after-touch", TxBuf, RxBuf);
 
-  if (EFI_ERROR (Status)) {
-    DEBUG ((DEBUG_ERROR, "SPIHID: transfer did not complete; nothing was received\n"));
-    FreePool (TxBuf);
-    FreePool (RxBuf);
-    return EFI_SUCCESS;
-  }
-
-  Distinct = 0;
-  First    = RxBuf[0];
-  for (Index = 0; Index < SPI_TRANSFER_LEN; Index++) {
-    if (RxBuf[Index] != First) {
-      Distinct++;
-    }
-  }
-
-  DEBUG ((
-    DEBUG_ERROR,
-    "SPIHID: MISO first=0x%02x distinct=%u/256\n",
-    First,
-    (UINT32)Distinct
-    ));
-
-  if (Distinct == 0) {
-    DEBUG ((DEBUG_ERROR, "SPIHID: MISO is a constant 0x%02x. The block is either not\n", First));
-    DEBUG ((DEBUG_ERROR, "SPIHID: powered, its pads are still muxed away, or it needs the\n"));
-    DEBUG ((DEBUG_ERROR, "SPIHID: SPI-HID reset handshake before it drives MISO.\n"));
+  if ((DistinctA == MAX_UINTN) || (DistinctB == MAX_UINTN)) {
+    DEBUG ((DEBUG_ERROR, "SPIHID: a transfer did not complete; no MISO evidence\n"));
+  } else if (DistinctA != DistinctB) {
+    DEBUG ((DEBUG_ERROR, "SPIHID: the two dumps differ (%u vs %u) -- the device\n",
+            (UINT32)DistinctA, (UINT32)DistinctB));
+    DEBUG ((DEBUG_ERROR, "SPIHID: produced data after the touch. Framing is readable.\n"));
+  } else if (DistinctA == 0) {
+    DEBUG ((DEBUG_ERROR, "SPIHID: both dumps were a constant byte. The block is not\n"));
+    DEBUG ((DEBUG_ERROR, "SPIHID: driving MISO: unpowered, pads muxed away, or the\n"));
+    DEBUG ((DEBUG_ERROR, "SPIHID: SPI-HID reset handshake has not happened yet.\n"));
   } else {
-    DEBUG ((DEBUG_ERROR, "SPIHID: MISO varies; the transport answers. First 64 bytes:\n"));
-    DumpBytes (RxBuf, 64);
+    DEBUG ((DEBUG_ERROR, "SPIHID: MISO varies but did not change on touch. The link\n"));
+    DEBUG ((DEBUG_ERROR, "SPIHID: works; the request framing is still unknown.\n"));
   }
 
   FreePool (TxBuf);
   FreePool (RxBuf);
 
   DEBUG ((DEBUG_ERROR, "SPIHID: ===== end of stage 2 =====\n"));
+
+  SpiHold (15000, "C: holding 15 s so this screen can be read or photographed");
 
   return EFI_SUCCESS;
 }
