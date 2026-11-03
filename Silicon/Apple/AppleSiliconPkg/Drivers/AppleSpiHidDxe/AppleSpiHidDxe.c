@@ -1,39 +1,23 @@
 /** @file
- *  AppleSpiHidDxe - internal keyboard/trackpad transport survey for M1 (J313).
+ *  AppleSpiHidDxe - Apple SPI-HID transport for the internal keyboard and
+ *  trackpad on M1 (J313). Stage 2: controller programming and a raw transfer.
  *
- *  The J313 ADT has no MTP node, no SPI-HID-less keyboard and no boot-protocol
- *  USB keyboard: the built image enumerates pointing devices but never a
- *  keyboard, which is exactly why BDS reports
- *      [Bds] Connect ConIn failed - Not Found!!!
- *  and the UI it just started cannot be driven.
+ *  Stage 1 located the hardware and printed what iBoot left behind. This stage
+ *  drives the block:
  *
- *  M1 puts the internal keyboard and trackpad behind Apple SPI-HID:
+ *    - Controller programming follows drivers/spi/spi-apple.c in mainline Linux
+ *      (register map, FIFO handling, polled transfer).
+ *    - One 256-byte transfer is clocked with a zero payload and the MISO bytes
+ *      are dumped, which measures the SPI-HID framing instead of guessing it.
  *
- *      spi@23510c000            compatible "apple,t8103-spi", "apple,spi"
- *        hid-transport@0        compatible "apple,spi-hid-transport"
+ *  STILL NOT IMPLEMENTED: the SPI-HID message protocol and HID report decoding,
+ *  so this produces no input. It answers one question with evidence -- does the
+ *  transport answer at all, and what does its framing look like.
  *
- *  That is the transport Linux drives with spi-hid-core plus spi-hid-apple.
- *  Nothing in this tree implements either half yet, so the real driver is
- *  three pieces of work: an Apple SPI controller, the SPI-HID message
- *  protocol, and HID report decoding into SimpleTextInputEx.
- *
- *  THIS STAGE DOES NOT PRODUCE INPUT AND DELIBERATELY WRITES NOTHING.
- *
- *  How much of that work is actually required depends on one unmeasured fact:
- *  whether iBoot leaves spi3 powered, clocked and streaming. Unlike the MTP
- *  survey (AppleMtpHidDxe) the answer is cheap to measure, because the ADT
- *  nodes are reachable directly instead of through a coprocessor handshake:
- *
- *    - Controller alive and FIFO moving  -> reader plus framing. Moderate.
- *    - Controller dead                   -> PMGR power domain, clock gate and
- *                                           pinctrl first, then the above. Large.
- *
- *  So this driver only locates the nodes by compatible string, prints the
- *  controller register state it finds, and watches the RX FIFO while the
- *  operator touches the trackpad. It writes no SPI register, starts nothing
- *  and programs no clock. Register layout is from m1n1
- *  (proxyclient/m1n1/hw/spi.py, class SPIRegs), the only public description
- *  of this block.
+ *  Safety: every wait is bounded and every failure is reported rather than
+ *  retried. The only writes are the controller's own registers, in the order
+ *  Linux uses. No power domain, clock gate or pinmux is programmed; if iBoot
+ *  left those off, the transfer reads back idle bytes and says so.
  *
  *  Copyright (c) 2026 Aurora Silicon
  *  SPDX-License-Identifier: BSD-2-Clause-Patent
@@ -46,6 +30,7 @@
 #include <Library/BaseMemoryLib.h>
 #include <Library/DebugLib.h>
 #include <Library/IoLib.h>
+#include <Library/MemoryAllocationLib.h>
 #include <Library/PcdLib.h>
 #include <Library/TimerLib.h>
 #include <Library/UefiBootServicesTableLib.h>
@@ -53,45 +38,63 @@
 #include <Library/UefiLib.h>
 
 //
-// Apple SPI -- proxyclient/m1n1/hw/spi.py, class SPIRegs.
+// Apple SPI -- drivers/spi/spi-apple.c (mainline) and m1n1 hw/spi.py agree.
 //
-#define SPI_CTRL      0x000
-#define SPI_CFG       0x004
-#define SPI_STATUS    0x008
-#define SPI_PIN       0x00C
-#define SPI_RXDATA    0x020
-#define SPI_CLKDIV    0x030
-#define SPI_RXCNT     0x034
-#define SPI_INTER_DELAY 0x038
-#define SPI_TXCNT     0x04C
-#define SPI_FIFOSTAT  0x10C
-#define SPI_IE_XFER   0x130
-#define SPI_IF_XFER   0x134
-#define SPI_SHIFTCFG  0x150
-#define SPI_PINCFG    0x154
-#define SPI_DELAY_PRE 0x160
-#define SPI_SCKCFG    0x164
-#define SPI_XFSTATUS  0x1C0
+#define SPI_CTRL        0x000
+#define SPI_CTRL_RUN        BIT0
+#define SPI_CTRL_TX_RESET   BIT2
+#define SPI_CTRL_RX_RESET   BIT3
 
-//
-// R_FIFOSTAT: LEVEL_RX is bits 31:24, RX_EMPTY bit 20, LEVEL_TX 15:8, TX_FULL bit 4.
-//
+#define SPI_CFG         0x004
+#define SPI_CFG_MODE_POLLED 0
+#define SPI_CFG_WORD_SIZE_8B 0
+#define SPI_CFG_FIFO_THRESH_8B 0
+
+#define SPI_STATUS      0x008
+#define SPI_PIN         0x00C
+#define SPI_PIN_CS          BIT1
+#define SPI_TXDATA      0x010
+#define SPI_RXDATA      0x020
+#define SPI_CLKDIV      0x030
+#define SPI_RXCNT       0x034
+#define SPI_TXCNT       0x04C
+#define SPI_FIFOSTAT    0x10C
+#define SPI_FIFOSTAT_LEVEL_TX(v)  (((v) >> 8) & 0xFF)
 #define SPI_FIFOSTAT_LEVEL_RX(v)  (((v) >> 24) & 0xFF)
+#define SPI_IE_XFER     0x130
+#define SPI_IF_XFER     0x134
+#define SPI_IF_XFER_RXCOMPLETE BIT0
+#define SPI_IF_XFER_TXCOMPLETE BIT1
+#define SPI_IE_FIFO     0x138
+#define SPI_IF_FIFO     0x13C
+#define SPI_IF_FIFO_TXTHRESH BIT5
+#define SPI_IF_FIFO_RXTHRESH BIT4
+#define SPI_SHIFTCFG    0x150
+#define SPI_SHIFTCFG_CS_ENABLE  BIT1
+#define SPI_PINCFG      0x154
+#define SPI_PINCFG_KEEP_CS      BIT1
+#define SPI_PINCFG_CS_IDLE_VAL  BIT9
+#define SPI_DELAY_PRE   0x160
+#define SPI_DELAY_POST  0x168
+#define SPI_XFSTATUS    0x1C0
+
+#define SPI_FIFO_DEPTH  16
+#define SPI_TIMEOUT_MS  200
+#define SPI_POLL_MS     1
 
 //
-// How long to watch the RX FIFO, and how often to sample. The operator should
-// touch the trackpad during this window; that is the only input this machine
-// can produce without the driver this survey is meant to size.
+// 200 MHz is the reference clock the ADT gives spi3 ("clocks = <&clk_200m>").
+// A 1 MHz bus is far below anything the keyboard needs and is the safest
+// starting point while the pads are still configured by iBoot.
 //
-#define SPI_WATCH_MILLISECONDS   8000
-#define SPI_WATCH_INTERVAL_MS    100
+#define SPI_REFCLK_HZ   200000000
+#define SPI_BUS_HZ      1000000
 
+#define SPI_TRANSFER_LEN  256
+
+STATIC UINTN      mSpiBase;
 STATIC dt_node_t  *mHidTransportNode;
-STATIC dt_node_t  *mSpiNode;
 
-/**
-  Return TRUE when the NUL-separated string list Val/Len contains Target.
-**/
 STATIC
 BOOLEAN
 ListContains (
@@ -123,10 +126,6 @@ ListContains (
   return FALSE;
 }
 
-/**
-  Property visitor: record the SPI-HID transport node and the first SPI
-  controller. Returning 0 keeps the walk going.
-**/
 STATIC
 int
 EFIAPI
@@ -142,7 +141,7 @@ SpiHidPropCallback (
   (VOID)Arg;
   (VOID)Depth;
 
-  if ((Key == NULL) || (Val == NULL)) {
+  if ((Key == NULL) || (Val == NULL) || (mHidTransportNode != NULL)) {
     return 0;
   }
 
@@ -150,18 +149,13 @@ SpiHidPropCallback (
     return 0;
   }
 
-  if ((mHidTransportNode == NULL) &&
-      ListContains ((CONST CHAR8 *)Val, Len, "apple,spi-hid-transport"))
-  {
+  if (ListContains ((CONST CHAR8 *)Val, Len, "apple,spi-hid-transport")) {
     mHidTransportNode = Node;
   }
 
   return 0;
 }
 
-/**
-  Node visitor. It has to exist because dt_parse calls it for every node.
-**/
 STATIC
 int
 EFIAPI
@@ -178,8 +172,228 @@ SpiHidNodeCallback (
   return 0;
 }
 
+STATIC
+UINT32
+SpiRead (
+  IN UINT32  Offset
+  )
+{
+  return MmioRead32 (mSpiBase + Offset);
+}
+
+STATIC
+VOID
+SpiWrite (
+  IN UINT32  Offset,
+  IN UINT32  Value
+  )
+{
+  MmioWrite32 (mSpiBase + Offset, Value);
+}
 /**
-  Read-only survey. See the file header for why nothing is written.
+  Program the controller the way spi-apple.c does and leave it idle.
+**/
+STATIC
+EFI_STATUS
+SpiControllerInit (
+  VOID
+  )
+{
+  //
+  // CS high (inactive), auto-CS off, CS driven between transfers.
+  //
+  SpiWrite (SPI_PIN, SPI_PIN_CS);
+  SpiWrite (SPI_SHIFTCFG, SpiRead (SPI_SHIFTCFG) & ~(UINT32)SPI_SHIFTCFG_CS_ENABLE);
+  SpiWrite (SPI_PINCFG, SPI_PINCFG_CS_IDLE_VAL | SPI_PINCFG_KEEP_CS);
+
+  //
+  // Reset both FIFOs.
+  //
+  SpiWrite (SPI_CTRL, SPI_CTRL_TX_RESET | SPI_CTRL_RX_RESET);
+
+  //
+  // Polled mode, 8-bit words, 8-byte FIFO threshold.
+  //
+  SpiWrite (SPI_CFG, SPI_CFG_FIFO_THRESH_8B | SPI_CFG_MODE_POLLED | SPI_CFG_WORD_SIZE_8B);
+
+  SpiWrite (SPI_IE_XFER, 0);
+  SpiWrite (SPI_IE_FIFO, 0);
+  SpiWrite (SPI_DELAY_PRE, 0);
+  SpiWrite (SPI_DELAY_POST, 0);
+  SpiWrite (SPI_CLKDIV, SPI_REFCLK_HZ / SPI_BUS_HZ);
+
+  DEBUG ((
+    DEBUG_ERROR,
+    "SPIHID: init CFG=0x%08x SHIFTCFG=0x%08x PIN=0x%08x PINCFG=0x%08x CLKDIV=%u\n",
+    SpiRead (SPI_CFG),
+    SpiRead (SPI_SHIFTCFG),
+    SpiRead (SPI_PIN),
+    SpiRead (SPI_PINCFG),
+    SpiRead (SPI_CLKDIV)
+    ));
+
+  return EFI_SUCCESS;
+}
+
+/**
+  Poll until any requested FIFO or transfer bit is set. Bounded in wall time:
+  there is no interrupt path here and a stuck controller must report, not hang.
+**/
+STATIC
+EFI_STATUS
+SpiWait (
+  IN  UINT32  FifoBits,
+  IN  UINT32  XferBits,
+  OUT UINT32  *FifoSeen,
+  OUT UINT32  *XferSeen
+  )
+{
+  UINTN   ElapsedUs;
+  UINT32  Fifo;
+  UINT32  Xfer;
+
+  for (ElapsedUs = 0; ElapsedUs < SPI_TIMEOUT_MS * 1000; ElapsedUs += SPI_POLL_MS * 1000) {
+    Fifo = SpiRead (SPI_IF_FIFO);
+    Xfer = SpiRead (SPI_IF_XFER);
+    if (((Fifo & FifoBits) != 0) || ((Xfer & XferBits) != 0)) {
+      *FifoSeen = Fifo;
+      *XferSeen = Xfer;
+      return EFI_SUCCESS;
+    }
+
+    gBS->Stall (SPI_POLL_MS * 1000);
+  }
+
+  *FifoSeen = SpiRead (SPI_IF_FIFO);
+  *XferSeen = SpiRead (SPI_IF_XFER);
+  return EFI_TIMEOUT;
+}
+
+/**
+  One full-duplex transfer, 8-bit words, polled: the shape of
+  apple_spi_transfer_one() with interrupt waits replaced by SpiWait().
+**/
+STATIC
+EFI_STATUS
+SpiTransfer (
+  IN  CONST UINT8  *Tx,
+  OUT UINT8        *Rx,
+  IN  UINTN        Len
+  )
+{
+  EFI_STATUS  Status;
+  UINT32      FifoSeen;
+  UINT32      XferSeen;
+  UINT32      Pending;
+  UINT32      Level;
+  UINT32      FifoStat;
+  UINTN       TxLeft;
+  UINTN       RxLeft;
+  UINTN       Index;
+  UINTN       Words;
+
+  if ((Tx == NULL) || (Rx == NULL) || (Len == 0)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  SpiWrite (SPI_CTRL, SPI_CTRL_TX_RESET | SPI_CTRL_RX_RESET);
+  SpiWrite (SPI_IF_XFER, 0xFFFFFFFF);
+  SpiWrite (SPI_IF_FIFO, 0xFFFFFFFF);
+
+  SpiWrite (SPI_TXCNT, (UINT32)Len);
+  SpiWrite (SPI_RXCNT, (UINT32)Len);
+
+  TxLeft  = Len;
+  RxLeft  = Len;
+  Pending = SPI_IF_XFER_TXCOMPLETE | SPI_IF_XFER_RXCOMPLETE;
+
+  //
+  // Prime the TX FIFO, start, then top it up: the controller pops a few words
+  // the moment RUN is set, which is why spi-apple.c transmits twice.
+  //
+  Words = MIN (TxLeft, (UINTN)SPI_FIFO_DEPTH);
+  for (Index = 0; Index < Words; Index++) {
+    SpiWrite (SPI_TXDATA, Tx[Index]);
+  }
+
+  TxLeft -= Words;
+
+  SpiWrite (SPI_CTRL, SPI_CTRL_RUN);
+
+  while (Pending != 0) {
+    Status = SpiWait (
+               ((TxLeft != 0) ? SPI_IF_FIFO_TXTHRESH : 0) |
+               ((RxLeft != 0) ? SPI_IF_FIFO_RXTHRESH : 0),
+               Pending,
+               &FifoSeen,
+               &XferSeen
+               );
+    if (EFI_ERROR (Status)) {
+      DEBUG ((
+        DEBUG_ERROR,
+        "SPIHID: transfer timed out: tx_left=%u rx_left=%u IF_XFER=0x%08x IF_FIFO=0x%08x\n",
+        (UINT32)TxLeft,
+        (UINT32)RxLeft,
+        XferSeen,
+        FifoSeen
+        ));
+      return Status;
+    }
+
+    Pending &= ~XferSeen;
+
+    FifoStat = SpiRead (SPI_FIFOSTAT);
+    while ((TxLeft != 0) &&
+           (SPI_FIFOSTAT_LEVEL_TX (FifoStat) < SPI_FIFO_DEPTH))
+    {
+      SpiWrite (SPI_TXDATA, Tx[Len - TxLeft]);
+      TxLeft--;
+      FifoStat = SpiRead (SPI_FIFOSTAT);
+    }
+
+    Level = SPI_FIFOSTAT_LEVEL_RX (SpiRead (SPI_FIFOSTAT));
+    while ((RxLeft != 0) && (Level != 0)) {
+      Rx[Len - RxLeft] = (UINT8)SpiRead (SPI_RXDATA);
+      RxLeft--;
+      Level--;
+    }
+  }
+
+  while (RxLeft != 0) {
+    Rx[Len - RxLeft] = (UINT8)SpiRead (SPI_RXDATA);
+    RxLeft--;
+  }
+
+  return EFI_SUCCESS;
+}
+/**
+  Dump a byte buffer as hex, a line per 16 bytes. Only used for the probe.
+**/
+STATIC
+VOID
+DumpBytes (
+  IN CONST UINT8  *Data,
+  IN UINTN        Len
+  )
+{
+  UINTN  Offset;
+  UINTN  Index;
+  CHAR8  Line[3 * 16 + 1];
+
+  for (Offset = 0; Offset < Len; Offset += 16) {
+    for (Index = 0; (Index < 16) && (Offset + Index < Len); Index++) {
+      Line[Index * 3 + 0] = "0123456789ABCDEF"[Data[Offset + Index] >> 4];
+      Line[Index * 3 + 1] = "0123456789ABCDEF"[Data[Offset + Index] & 0xF];
+      Line[Index * 3 + 2] = ' ';
+    }
+
+    Line[Index * 3] = '\0';
+    DEBUG ((DEBUG_ERROR, "SPIHID:   %04x: %a\n", (UINT32)Offset, Line));
+  }
+}
+
+/**
+  Locate, program and probe the SPI-HID transport. See the file header.
 **/
 EFI_STATUS
 EFIAPI
@@ -188,153 +402,142 @@ AppleSpiHidDxeInitialize (
   IN EFI_SYSTEM_TABLE  *SystemTable
   )
 {
+  EFI_STATUS  Status;
   uint64_t    Base;
   uint64_t    Size;
-  UINT32      Cfg;
-  UINT32      Control;
-  UINT32      StatusReg;
-  UINT32      FifoStat;
-  UINT32      RxCount;
-  UINT32      Baseline;
-  UINT32      Peak;
-  UINT32      Samples;
-  UINT32      Level;
-  UINT32      Index;
-  BOOLEAN     Changed;
   dt_node_t   *Root;
+  dt_node_t   *SpiNode;
+  UINT8       *TxBuf;
+  UINT8       *RxBuf;
+  UINT32      FifoStat;
+  UINT32      IfXfer;
+  UINT32      IfFifo;
+  UINT32      Ctrl;
+  UINTN       Index;
+  UINTN       Distinct;
+  UINT8       First;
 
-  DEBUG ((DEBUG_ERROR, "SPIHID: ===== internal keyboard/trackpad (SPI-HID) survey, stage 1 =====\n"));
-  DEBUG ((DEBUG_ERROR, "SPIHID: read-only: no register is written, nothing is started\n"));
+  DEBUG ((DEBUG_ERROR, "SPIHID: ===== SPI-HID transport, stage 2: controller + raw transfer =====\n"));
 
-  //
-  // 1. Locate the nodes in the live ADT. Matching on compatible keeps this
-  //    independent of the ADT's own naming, which has moved between SoCs.
-  //
   Root = (dt_node_t *)(UINTN)FixedPcdGet64 (PcdAdtPointer);
   if (Root == NULL) {
-    DEBUG ((DEBUG_ERROR, "SPIHID: no ADT pointer; cannot survey\n"));
-    return EFI_NOT_FOUND;
+    DEBUG ((DEBUG_ERROR, "SPIHID: no ADT pointer; nothing to do\n"));
+    return EFI_SUCCESS;
   }
 
-  dt_parse (
-    Root,
-    0,
-    NULL,
-    SpiHidNodeCallback,
-    NULL,
-    SpiHidPropCallback,
-    NULL
-    );
+  dt_parse (Root, 0, NULL, SpiHidNodeCallback, NULL, SpiHidPropCallback, NULL);
 
-  DEBUG ((
-    DEBUG_ERROR,
-    "SPIHID: spi-hid-transport node: %a, spi controller: %a\n",
-    mHidTransportNode != NULL ? "FOUND" : "ABSENT",
-    mSpiNode != NULL ? "FOUND" : "ABSENT"
-    ));
-
-  //
-  // Only our own parent controller may be probed. Matching "apple,spi" blindly
-  // would pick whichever controller the ADT lists first -- on this machine that
-  // is spi0, not spi3 -- and reading an unrelated, unpowered block is exactly
-  // the kind of stray MMIO that has hung this platform before.
-  //
   if (mHidTransportNode == NULL) {
-    DEBUG ((DEBUG_ERROR, "SPIHID: no SPI-HID transport in this ADT; not probing any controller\n"));
-    return EFI_NOT_FOUND;
+    DEBUG ((DEBUG_ERROR, "SPIHID: no apple,spi-hid-transport node in this ADT\n"));
+    return EFI_SUCCESS;
   }
 
-  mSpiNode = dt_node_parent (mHidTransportNode);
-  if (mSpiNode == NULL) {
-    DEBUG ((DEBUG_ERROR, "SPIHID: SPI-HID transport has no parent controller\n"));
-    return EFI_NOT_FOUND;
+  SpiNode = dt_node_parent (mHidTransportNode);
+  if (SpiNode == NULL) {
+    DEBUG ((DEBUG_ERROR, "SPIHID: transport node has no parent controller\n"));
+    return EFI_SUCCESS;
   }
 
-  //
-  // The SPI-HID child carries the chip select, not the registers; the MMIO
-  // window belongs to its parent controller.
-  //
-  if (dt_node_reg (mSpiNode, 0, &Base, &Size) != 0) {
-    DEBUG ((DEBUG_ERROR, "SPIHID: SPI controller has no reg[0]\n"));
-    return EFI_NOT_FOUND;
+  if (dt_node_reg (SpiNode, 0, &Base, &Size) != 0) {
+    DEBUG ((DEBUG_ERROR, "SPIHID: controller has no reg[0]\n"));
+    return EFI_SUCCESS;
   }
 
-  DEBUG ((DEBUG_ERROR, "SPIHID: SPI controller reg[0] = 0x%lx size 0x%lx\n", Base, Size));
+  mSpiBase = (UINTN)Base;
+  DEBUG ((DEBUG_ERROR, "SPIHID: controller at 0x%lx size 0x%lx\n", Base, Size));
 
   //
-  // 2. What state is the block in? A handful of reads tells us whether the
-  //    controller was left programmed by iBoot, which is the whole question.
+  // What iBoot left behind, before this driver touches anything.
   //
-  Control   = MmioRead32 ((UINTN)Base + SPI_CTRL);
-  Cfg       = MmioRead32 ((UINTN)Base + SPI_CFG);
-  StatusReg = MmioRead32 ((UINTN)Base + SPI_STATUS);
-  FifoStat  = MmioRead32 ((UINTN)Base + SPI_FIFOSTAT);
-  RxCount   = MmioRead32 ((UINTN)Base + SPI_RXCNT);
+  Ctrl = SpiRead (SPI_CTRL);
+  DEBUG ((
+    DEBUG_ERROR,
+    "SPIHID: before CTRL=0x%08x CFG=0x%08x PIN=0x%08x CLKDIV=0x%08x\n",
+    Ctrl,
+    SpiRead (SPI_CFG),
+    SpiRead (SPI_PIN),
+    SpiRead (SPI_CLKDIV)
+    ));
+  DEBUG ((DEBUG_ERROR, "SPIHID: before CTRL.RUN is %a\n", (Ctrl & SPI_CTRL_RUN) != 0 ? "SET" : "CLEAR"));
 
-  DEBUG ((DEBUG_ERROR, "SPIHID: CTRL=0x%08x CFG=0x%08x STATUS=0x%08x\n", Control, Cfg, StatusReg));
-  DEBUG ((DEBUG_ERROR, "SPIHID: FIFOSTAT=0x%08x RXCNT=0x%08x CLKDIV=0x%08x\n",
-          FifoStat, RxCount, MmioRead32 ((UINTN)Base + SPI_CLKDIV)));
-  DEBUG ((DEBUG_ERROR, "SPIHID: SHIFTCFG=0x%08x PINCFG=0x%08x SCKCFG=0x%08x XFSTATUS=0x%08x\n",
-          MmioRead32 ((UINTN)Base + SPI_SHIFTCFG),
-          MmioRead32 ((UINTN)Base + SPI_PINCFG),
-          MmioRead32 ((UINTN)Base + SPI_SCKCFG),
-          MmioRead32 ((UINTN)Base + SPI_XFSTATUS)));
-
-  if ((Control & BIT0) == 0) {
-    DEBUG ((DEBUG_ERROR, "SPIHID: CTRL.RUN is clear; iBoot left the block idle\n"));
-  } else {
-    DEBUG ((DEBUG_ERROR, "SPIHID: CTRL.RUN is set; iBoot left the block running\n"));
+  Status = SpiControllerInit ();
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "SPIHID: controller init failed (%r)\n", Status));
+    return EFI_SUCCESS;
   }
 
-  //
-  // 3. Watch the RX FIFO. Any movement proves the transport is live and that
-  //    the remaining work is framing rather than power, clock and pinmux.
-  //
-  DEBUG ((DEBUG_ERROR, "SPIHID: watching RX FIFO for %u ms -- touch the trackpad or press a key now\n",
-          SPI_WATCH_MILLISECONDS));
-
-  Baseline = SPI_FIFOSTAT_LEVEL_RX (FifoStat);
-  Peak     = Baseline;
-  Samples  = 0;
-  Changed  = FALSE;
-
-  for (Index = 0; Index < (SPI_WATCH_MILLISECONDS / SPI_WATCH_INTERVAL_MS); Index++) {
-    gBS->Stall (SPI_WATCH_INTERVAL_MS * 1000);
-
-    FifoStat = MmioRead32 ((UINTN)Base + SPI_FIFOSTAT);
-    Level    = SPI_FIFOSTAT_LEVEL_RX (FifoStat);
-    Samples++;
-
-    if (Level != Baseline) {
-      Changed = TRUE;
+  TxBuf = AllocateZeroPool (SPI_TRANSFER_LEN);
+  RxBuf = AllocateZeroPool (SPI_TRANSFER_LEN);
+  if ((TxBuf == NULL) || (RxBuf == NULL)) {
+    DEBUG ((DEBUG_ERROR, "SPIHID: out of memory\n"));
+    if (TxBuf != NULL) {
+      FreePool (TxBuf);
     }
 
-    if (Level > Peak) {
-      Peak = Level;
+    if (RxBuf != NULL) {
+      FreePool (RxBuf);
     }
+
+    return EFI_SUCCESS;
   }
 
-  RxCount = MmioRead32 ((UINTN)Base + SPI_RXCNT);
+  //
+  // Clock one buffer through. The payload is not a real SPI-HID request yet --
+  // this is the measure-first step: if MISO returns anything structured, the
+  // framing can be read off the dump instead of guessed from another OS.
+  //
+  DEBUG ((DEBUG_ERROR, "SPIHID: transferring %u bytes at %u Hz\n", SPI_TRANSFER_LEN, SPI_BUS_HZ));
+
+  Status = SpiTransfer (TxBuf, RxBuf, SPI_TRANSFER_LEN);
+
+  FifoStat = SpiRead (SPI_FIFOSTAT);
+  IfXfer   = SpiRead (SPI_IF_XFER);
+  IfFifo   = SpiRead (SPI_IF_FIFO);
 
   DEBUG ((
     DEBUG_ERROR,
-    "SPIHID: samples=%u baseline=%u peak=%u changed=%a RXCNT=0x%08x\n",
-    Samples,
-    Baseline,
-    Peak,
-    Changed ? "YES" : "NO",
-    RxCount
+    "SPIHID: after transfer status=%r FIFOSTAT=0x%08x IF_XFER=0x%08x IF_FIFO=0x%08x\n",
+    Status,
+    FifoStat,
+    IfXfer,
+    IfFifo
     ));
 
-  if (Changed) {
-    DEBUG ((DEBUG_ERROR, "SPIHID: transport is streaming; the driver needs framing, not bring-up\n"));
-  } else {
-    DEBUG ((DEBUG_ERROR, "SPIHID: no FIFO movement seen. Either the block is unpowered, the\n"));
-    DEBUG ((DEBUG_ERROR, "SPIHID: pad muxes are off, or SPI-HID needs its reset handshake first.\n"));
-    DEBUG ((DEBUG_ERROR, "SPIHID: that is the difference between a reader and a bring-up port.\n"));
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "SPIHID: transfer did not complete; nothing was received\n"));
+    FreePool (TxBuf);
+    FreePool (RxBuf);
+    return EFI_SUCCESS;
   }
 
-  DEBUG ((DEBUG_ERROR, "SPIHID: ===== end of survey =====\n"));
+  Distinct = 0;
+  First    = RxBuf[0];
+  for (Index = 0; Index < SPI_TRANSFER_LEN; Index++) {
+    if (RxBuf[Index] != First) {
+      Distinct++;
+    }
+  }
+
+  DEBUG ((
+    DEBUG_ERROR,
+    "SPIHID: MISO first=0x%02x distinct=%u/256\n",
+    First,
+    (UINT32)Distinct
+    ));
+
+  if (Distinct == 0) {
+    DEBUG ((DEBUG_ERROR, "SPIHID: MISO is a constant 0x%02x. The block is either not\n", First));
+    DEBUG ((DEBUG_ERROR, "SPIHID: powered, its pads are still muxed away, or it needs the\n"));
+    DEBUG ((DEBUG_ERROR, "SPIHID: SPI-HID reset handshake before it drives MISO.\n"));
+  } else {
+    DEBUG ((DEBUG_ERROR, "SPIHID: MISO varies; the transport answers. First 64 bytes:\n"));
+    DumpBytes (RxBuf, 64);
+  }
+
+  FreePool (TxBuf);
+  FreePool (RxBuf);
+
+  DEBUG ((DEBUG_ERROR, "SPIHID: ===== end of stage 2 =====\n"));
 
   return EFI_SUCCESS;
 }
