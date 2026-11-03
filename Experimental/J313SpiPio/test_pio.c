@@ -181,22 +181,50 @@ static void failures(void) {
  for(i=0;i<sizeof(faults)/sizeof(faults[0]);++i) {
   struct model m; struct pio_io io; struct pio_config c=config(); struct pio_result r;
   struct pio_segment s={tx,rx+1,32,0};
-  init(&m,faults[i]); io=io_for(&m); memset(rx,0xa5,sizeof(rx));
   c.timeout_us=500; c.step_budget=5000;
-  /* Late tail needs enough budget for final hold+inactive too. */
-  if(faults[i]==LATE_RX) c.timeout_us=2000;
+  /* Normal 32-byte transfer including setup/hold/inactive takes 662us. */
+  if(faults[i]==LATE_RX || faults[i]==NO_DONE) c.timeout_us=2000;
+  /* Slow progress needs 640us after RUN: deadline must expire inside the segment. */
+  if(faults[i]==SLOW) c.timeout_us=800;
+  if(faults[i]==SLOW || faults[i]==NO_DONE) {
+   c.step_budget=10000; /* Let the time deadline, not step exhaustion, decide. */
+   init(&m,NORMAL); io=io_for(&m); memset(rx,0xa5,sizeof(rx));
+   r=pio_transaction(&io,&c,&s,1); clean(&m,r);
+   assert(r.status==PIO_OK && r.segments_completed==1);
+   assert(r.tx_queued==32 && r.tx_completed==32 && r.rx_completed==32);
+   assert((m.regs[P_IF_XFER/4] & (P_TX_DONE | P_RX_DONE)) == (P_TX_DONE | P_RX_DONE));
+   assert(m.now-100==662 && m.now-100<c.timeout_us);
+   assert(rx[0]==0xa5 && rx[33]==0xa5);
+   for(j=0;j<32;++j) assert(rx[j+1]==data(j));
+  }
   if(faults[i]==FROZEN) c.setup_us=c.inactive_us=0;
+  init(&m,faults[i]); io=io_for(&m); memset(rx,0xa5,sizeof(rx));
   r=pio_transaction(&io,&c,&s,1); clean(&m,r);
   if(r.status!=expect[i]) fprintf(stderr,"fault %u got %d expected %d\n",i,r.status,expect[i]);
   assert(r.status==expect[i]); assert(rx[0]==0xa5 && rx[33]==0xa5);
   assert(r.steps<=c.step_budget);
+  if(faults[i]==SLOW || faults[i]==NO_DONE) {
+   assert(r.segments_completed==0 && m.now-100==c.timeout_us);
+   assert(r.steps<c.step_budget && r.fifo_error_flags==0);
+   assert((m.regs[P_IF_XFER/4] & (P_TX_DONE | P_RX_DONE))==0);
+   for(j=0;j<r.rx_completed;++j) assert(rx[j+1]==data(j));
+  }
+  if(faults[i]==NO_DONE) {
+   assert(r.tx_queued==32 && r.tx_completed==32 && r.rx_completed==32);
+   assert(m.tn==0 && m.rn==0);
+  }
+  if(faults[i]==SLOW) {
+   assert(r.tx_queued==32);
+   assert(r.tx_completed>0 && r.tx_completed<32);
+   assert(r.rx_completed>0 && r.rx_completed<32);
+  }
   if(faults[i]==STICKY) assert(r.tx_completed==0 && r.rx_completed==0);
   if(faults[i]==SHORT_RX) assert(r.rx_completed==31);
   if(faults[i]==LATE_RX) assert(r.rx_completed==32);
   if(faults[i]==OVERFLOW) assert(r.fifo_error_flags & P_TX_OVERFLOW);
   if(faults[i]==UNDERRUN) assert(r.fifo_error_flags & P_RX_UNDERRUN);
  }
- puts("PASS 12 fault/tail scenarios, error flags, bounded waits, guards and cleanup");
+ puts("PASS 12 fault/tail scenarios + 2 matched NORMAL controls, error flags, bounded waits, guards and cleanup");
 }
 static void invalid(void) {
  struct model m; struct pio_io io; struct pio_config c; struct pio_result r;

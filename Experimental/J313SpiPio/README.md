@@ -1,6 +1,6 @@
 # J313 SPI PIO：独立 host-only transaction engine
 
-本目录仅为纯 C host 实验，不连接 firmware，没有真实 MMIO 后端、物理地址、PMGR/GPIO/AIC 访问或硬件测试。通过 host 模型不代表 J313 板级可用。未改现有文件、未 push、未部署。
+本目录仅为纯 C host 实验，不连接 firmware，没有真实 MMIO 后端、物理地址、PMGR/GPIO/AIC 访问或硬件测试。通过 host 模型不代表 J313 板级可用。本轮审查修复仅修改本目录测试和 README；引擎及头文件未改，未 push、未部署。
 
 ## 来源及许可证
 
@@ -41,12 +41,63 @@ clang -std=c11 -Wall -Wextra -Werror -pedantic -O1 -g \
 /tmp/j313_spi_pio_test
 ```
 
-本次 clang + ASan + UBSan 编译/运行 exit 0，无 sanitizer diagnostics。测试输出：
+本轮普通 clang 和 clang + ASan + UBSan 严格警告编译/运行均 exit 0，无 sanitizer diagnostics。测试输出：
 
     PASS 120 success cases: 10 lengths x TX/RX/full-duplex x 4 modes
     PASS TX256 + 200us + RX4, continuous CS, configurable timing and global delay bounds
-    PASS 12 fault/tail scenarios, error flags, bounded waits, guards and cleanup
+    PASS 12 fault/tail scenarios + 2 matched NORMAL controls, error flags, bounded waits, guards and cleanup
     PASS 9 invalid configurations: zero IO
     ALL HOST TESTS PASSED
 
 成功长度为 1/4/15/16/17/31/32/255/256/513；三种方向与四种 CPOL/CPHA 组合。12 场景为 sticky threshold 永无进度、premature TX done、RX done 后尾字迟到成功、永久短收、TX overflow、RX underrun、多收、非法 FIFO level、时钟倒退、RUN 中时钟停住 step budget 退出、慢流全局超时、长度已齐但没有 done 位。额外覆盖跨段 delay 超时、数据段均完成但收尾超时、guard 字节、FIFO 容量、零空读、CS 边沿、保留未知位和所有 started 出口清理。无效配置9项均零 IO。
+
+## 审查修复与变异负控证据
+
+旧 failures 默认500us，但正常32-byte全双工含首尾需要250+65+32+65+250=662us。只断言 TIMEOUT 会将缺少 done 检查后的收尾超时误认为正确失败。
+
+- NO_DONE 改为2000us、step_budget=10000；同参数 NORMAL 对照断言成功、完成一段、TX queued/completed 与 RX completed 均为32、done齐全、数据及guard正确，耗时662us。故障断言 TIMEOUT、segments_completed=0、TX queued/completed 与 RX completed 均为32、FIFO空、两个done位均缺失及数据完整。
+- SLOW 改为800us、step_budget=10000，同参数 NORMAL 在662us成功。慢流每20us进展一字节，数据段完成至少需250+65+640=955us；断言段未完成、TX/RX有进展但不足32、done缺失，排除仅收尾超时的假阳性。
+- 两个故障均断言恰在原事务deadline退出、未耗尽step budget、无FIFO error，保留cleanup及guard检查。时间均为合成模型时间，不是实测硬件时间。
+
+| 引擎 | 构建 | 实跑结果 |
+| --- | --- | --- |
+| 原引擎 | 普通严格警告 | exit 0，ALL HOST TESTS PASSED |
+| 原引擎 | ASan + UBSan | exit 0，无sanitizer diagnostics |
+| 删除done条件的临时副本 | 普通严格警告 | 编译成功；运行exit 134，NO_DONE断言失败 |
+| 删除done条件的临时副本 | ASan + UBSan | 编译成功；运行exit 134，同一NO_DONE断言失败 |
+
+两次负控均报告 `fault 11 got 0 expected 2`，随后在 `failures` 的 `assert(r.status==expect[i])` 失败（本轮test_pio.c第204行）；0=PIO_OK，2=PIO_TIMEOUT。不是编译错误或sanitizer报告导致失败。
+
+下列命令在本目录复现，所有产物均放仓库外临时目录。变异仅删除 `(flags & needed) == needed &&`，并加 `(void)needed` 避免unused-variable编译失败；仓库引擎不变。不使用 `-DNDEBUG`。
+
+```sh
+tmp=$(mktemp -d /tmp/j313-pio-review.XXXXXX)
+export PIO_REVIEW_TMP="$tmp"
+python3 - <<'PY'
+import os
+from pathlib import Path
+source = Path("j313_spi_pio.c").read_text()
+condition = "(flags & needed) == needed &&"
+assert source.count(condition) == 1
+mutant = source.replace(condition, "").replace(
+    " bool running = false;",
+    " (void)needed; /* Mutation-only unused-variable suppression. */\n bool running = false;"
+)
+Path(os.environ["PIO_REVIEW_TMP"], "mutant.c").write_text(mutant)
+PY
+for mode in plain sanitized; do
+  sanitizer=""
+  if [ "$mode" = sanitized ]; then
+    sanitizer="-fsanitize=address,undefined -fno-sanitize-recover=all"
+  fi
+  clang -std=c11 -Wall -Wextra -Werror -pedantic -O1 -g $sanitizer \
+    j313_spi_pio.c test_pio.c -o "$tmp/$mode" || exit 1
+  "$tmp/$mode" || exit 1
+  clang -std=c11 -Wall -Wextra -Werror -pedantic -O1 -g $sanitizer -I . \
+    "$tmp/mutant.c" test_pio.c -o "$tmp/mutant-$mode" || exit 1
+  (ulimit -c 0; "$tmp/mutant-$mode")
+  rc=$?
+  printf "mutant-%s exit=%s (expected 134)\n" "$mode" "$rc"
+  test "$rc" -eq 134 || exit 1
+done
+```
