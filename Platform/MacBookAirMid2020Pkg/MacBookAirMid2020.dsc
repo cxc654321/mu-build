@@ -28,6 +28,10 @@
   # there is one to describe.
   #
   DEFINE NTASI_SOC_HAS_PCIE = 1
+  # J313 only; -D J313_SRE_HANDOFF=FALSE retains the original GOP path.
+!ifndef J313_SRE_HANDOFF
+  DEFINE J313_SRE_HANDOFF = TRUE
+!endif
 
   PLATFORM_GUID                  = 482c40bb-f36c-4c25-bc04-2c05e75542ef
   PLATFORM_VERSION               = 1.0
@@ -137,6 +141,10 @@
   
 
 [Components.common]
+
+!if $(J313_SRE_HANDOFF) == TRUE
+  AppleSiliconPkg/Drivers/J313SreHandoffDxe/J313SreHandoffDxe.inf
+!endif
 
   MacBookAirMid2020Pkg/AcpiTables/DeviceAcpiTables.inf
 

@@ -1,0 +1,39 @@
+## @file
+# J313-only synchronous GOP / SRE handoff.
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = J313SreHandoffDxe
+  FILE_GUID = B05A11C7-C927-4D40-BDB9-7A1BDB9B7213
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 1.0
+  ENTRY_POINT = J313SreHandoffEntry
+
+[Sources]
+  J313SreHandoffDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MsGraphicsPkg/MsGraphicsPkg.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  BaseMemoryLib
+  UefiLib
+  DevicePathLib
+  DebugLib
+  MemoryAllocationLib
+  PcdLib
+
+[Protocols]
+  gEfiDriverBindingProtocolGuid
+  gEfiLoadedImageProtocolGuid
+  gEfiGraphicsOutputProtocolGuid
+  gMsSREProtocolGuid
+
+[Pcd]
+  gMsGraphicsPkgTokenSpaceGuid.PcdMsGopOverrideProtocolGuid
+
+[Depex]
+  TRUE

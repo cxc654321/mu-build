@@ -136,6 +136,10 @@ READ_LOCK_STATUS   = TRUE
 
   !include AppleSiliconPkg/AppleSiliconFvMain.fdf.inc
 
+!if $(J313_SRE_HANDOFF) == TRUE
+  INF AppleSiliconPkg/Drivers/J313SreHandoffDxe/J313SreHandoffDxe.inf
+!endif
+
   # Bring-up diagnostics: dumps the memory map / resource HOBs to the panel.
   INF AppleSiliconPkg/Drivers/J313MemMapDxe/J313MemMapDxe.inf
 

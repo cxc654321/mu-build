@@ -13,6 +13,13 @@ APRIORI DXE {
   INF MdeModulePkg/Universal/StatusCodeHandler/RuntimeDxe/StatusCodeHandlerRuntimeDxe.inf
   INF MdeModulePkg/Universal/HiiDatabaseDxe/HiiDatabaseDxe.inf
   INF AppleSiliconPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf
+!ifdef J313_SRE_HANDOFF
+!if $(J313_SRE_HANDOFF) == TRUE
+  # Synchronous replacement before any console consumer is dispatched.
+  INF MsGraphicsPkg/RenderingEngineDxe/RenderingEngineDxe.inf
+  INF AppleSiliconPkg/Drivers/J313SreHandoffDxe/J313SreHandoffDxe.inf
+!endif
+!endif
   INF MdeModulePkg/Universal/Console/ConPlatformDxe/ConPlatformDxe.inf
   INF MdeModulePkg/Universal/Console/ConSplitterDxe/ConSplitterDxe.inf
   INF MdeModulePkg/Universal/Console/GraphicsConsoleDxe/GraphicsConsoleDxe.inf
