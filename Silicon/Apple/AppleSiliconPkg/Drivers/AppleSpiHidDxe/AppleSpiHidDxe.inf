@@ -1,16 +1,9 @@
 ## @file
-#  AppleSpiHidDxe - internal keyboard/trackpad transport survey for M1 (J313).
-#
-#  The J313 ADT has no MTP node. Its input devices hang off spi3 as a child named
-#  hid-transport@0 with compatible "apple,spi-hid-transport" -- Apple's SPI-HID
-#  arrangement, the same one Linux drives with spi-hid-core + spi-hid-apple.
-#
-#  Stage 1 (this driver) is READ-ONLY: it locates the nodes by compatible string,
-#  prints the controller register state, and watches the RX FIFO for a few seconds.
-#  It writes no controller register, starts no coprocessor and programs no clock.
-#
-#  Copyright (c) 2026 Aurora Silicon
-#  SPDX-License-Identifier: BSD-2-Clause-Patent
+#  Phase0 safety placeholder, NOT a usable keyboard or pointer driver.
+#  Only fixed diagnostics; no board discovery, transport, or input publication.
+#  Previous source is quarantined as non-deployable reference under
+#  ../artifacts/spihid-quarantine-a26de9a; Linux GPL provenance awaits audit.
+#  This replacement does not relicense or validate the quarantined source.
 ##
 
 [Defines]
@@ -18,7 +11,7 @@
   BASE_NAME                      = AppleSpiHidDxe
   FILE_GUID                      = 2c4f0b6e-61a8-4a2d-9f43-6e1a5c0d7b12
   MODULE_TYPE                    = DXE_DRIVER
-  VERSION_STRING                 = 1.0
+  VERSION_STRING                 = 0.0
   ENTRY_POINT                    = AppleSpiHidDxeInitialize
 
 [Sources]
@@ -26,24 +19,10 @@
 
 [Packages]
   MdePkg/MdePkg.dec
-  MdeModulePkg/MdeModulePkg.dec
-  AppleSiliconPkg/AppleSiliconPkg.dec
 
 [LibraryClasses]
-  BaseLib
-  BaseMemoryLib
-  DebugLib
-  IoLib
-  MemoryAllocationLib
-  TimerLib
-  UefiBootServicesTableLib
   UefiDriverEntryPoint
-  UefiLib
-  AppleDTLib
-  PcdLib
-
-[FixedPcd]
-  gAppleSiliconPkgTokenSpaceGuid.PcdAdtPointer
+  DebugLib
 
 [Depex]
   TRUE

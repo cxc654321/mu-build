@@ -378,11 +378,6 @@ OnReadyToBoot (
   }
 
   Loaded = 0;
-  //
-  // Give the operator time to point a camera at the panel before the list
-  // scrolls away, and hold it afterwards.
-  //
-  gBS->Stall (3 * 1000 * 1000);
   DEBUG ((DEBUG_ERROR, "LOADED: dumping %d debug image slots\n", (UINT32)Header->TableSize));
 
   for (Index = 0; Index < Header->TableSize; Index++) {
@@ -452,13 +447,9 @@ OnReadyToBoot (
   }
 
   //
-  // BDS arms the watchdog per boot option; disarm it again so the hold below
-  // and whatever follows cannot be cut short by a reset request.
+  // BDS arms the watchdog per boot option; keep it disabled for bring-up.
   //
   gBS->SetWatchdogTimer (0, 0, 0, NULL);
-
-  DEBUG ((DEBUG_ERROR, "HOLDING 15s FOR THE CAMERA\n"));
-  gBS->Stall (15 * 1000 * 1000);
 
   (VOID)Event;
   (VOID)Context;

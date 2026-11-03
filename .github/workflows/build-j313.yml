@@ -145,6 +145,9 @@ jobs:
         # Run on pristine pinned submodules. Do not apply the legacy ui-trace
         # transformation (DXE_DRIVER / GOP-only retry) in this build.
         run: |
+          python3 -B Tests/test_no_camera_holds.py
+          python3 -B Tests/test_spihid_safe_entry.py
+          python3 -B Tests/test_phase0_fb_marker.py
           python3 -B Tests/test_j313_sre_handoff.py
           python3 -B Tests/test_swm_boot_gate.py
           SWM_SOURCE_TREE="$PWD" python3 -B Tests/test_swm_readiness.py

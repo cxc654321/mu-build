@@ -169,71 +169,6 @@ FbPutChar (
   IN CHAR8  Ch
   );
 
-//
-/// Slow down specific lines so a camera can catch them.
-///
-/// There is no keyboard on this machine yet, so a console pager is not an
-/// option: nothing can be pressed to scroll. Instead the lines worth reading
-/// are paced -- the boot takes a few seconds longer and each interesting line
-/// sits on the glass long enough to photograph.
-///
-STATIC CHAR8  mLine[256];
-STATIC UINTN  mLineLen = 0;
-
-STATIC
-VOID
-FbSleepMs (
-  IN UINTN  Milliseconds
-  )
-{
-  UINT64  Frequency;
-  UINT64  Start;
-  UINT64  Now;
-  UINT64  Ticks;
-
-  __asm__ volatile ("mrs %0, cntfrq_el0" : "=r" (Frequency));
-  if (Frequency == 0) {
-    return;
-  }
-
-  Ticks = Frequency / 1000 * Milliseconds;
-
-  __asm__ volatile ("mrs %0, cntvct_el0" : "=r" (Start));
-  do {
-    __asm__ volatile ("mrs %0, cntvct_el0" : "=r" (Now));
-  } while ((Now - Start) < Ticks);
-}
-
-STATIC
-BOOLEAN
-LineIsInteresting (
-  VOID
-  )
-{
-  STATIC CONST CHAR8  *Tags[] = {
-    "AppleANS", "SWMTrace", "OSKTrace", "UI CHAIN", "LOADED:"
-  };
-  UINTN               Tag;
-  UINTN               Index;
-  UINTN               Hit;
-
-  for (Tag = 0; Tag < ARRAY_SIZE (Tags); Tag++) {
-    for (Index = 0; Index + 1 < mLineLen; Index++) {
-      for (Hit = 0; Tags[Tag][Hit] != 0; Hit++) {
-        if (mLine[Index + Hit] != Tags[Tag][Hit]) {
-          break;
-        }
-      }
-
-      if (Tags[Tag][Hit] == 0) {
-        return TRUE;
-      }
-    }
-  }
-
-  return FALSE;
-}
-
 STATIC
 VOID
 FbFlush (
@@ -333,6 +268,9 @@ FbProbe (
   FbFlush (0, mFb.StridePx * 4 * CellH * mFb.Rows);
 
   FbPuts ("#### APPLE FB DEBUG CONSOLE ####\n");
+  // Each module has its own probe state and clears the text area on first use.
+  // Repeat the build marker after every banner; this is not SPI entry evidence.
+  FbPuts ("J313-P0-20261104-r1\n");
   FbPuts ("FB BASE 0x");
   FbPrintHex ((UINTN)mFb.Base);
   FbPuts (" ");
@@ -484,15 +422,6 @@ FbPutChar (
   if (Ch == '\n') {
     FbFlushRow (mFb.CurY);
 
-    //
-    // The line is complete and on the glass: if it is one of the ones worth
-    // reading, leave it there for a while before the next line overwrites it.
-    //
-    if (LineIsInteresting ()) {
-      FbSleepMs (1200);
-    }
-
-    mLineLen = 0;
     mFb.CurX = 0;
     mFb.CurY++;
     if (mFb.CurY >= mFb.Rows) {
@@ -504,10 +433,6 @@ FbPutChar (
 
   if ((Ch >= 'a') && (Ch <= 'z')) {
     Ch = (CHAR8)(Ch - 'a' + 'A');
-  }
-
-  if (mLineLen + 1 < sizeof (mLine)) {
-    mLine[mLineLen++] = Ch;
   }
 
   FbDrawGlyph (Ch);
