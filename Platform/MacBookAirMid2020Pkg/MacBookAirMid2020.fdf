@@ -143,6 +143,9 @@ READ_LOCK_STATUS   = TRUE
   # Bring-up diagnostics: dumps the memory map / resource HOBs to the panel.
   INF AppleSiliconPkg/Drivers/J313MemMapDxe/J313MemMapDxe.inf
 
+  # Stage 1 SPI-HID survey: prints controller state, watches the RX FIFO.
+  INF AppleSiliconPkg/Drivers/AppleSpiHidDxe/AppleSpiHidDxe.inf
+
   #Main DXE core
 
   #

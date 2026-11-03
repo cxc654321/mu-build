@@ -152,6 +152,12 @@
   # anything else has consumed memory. Bring-up diagnostic; depex TRUE.
   AppleSiliconPkg/Drivers/J313MemMapDxe/J313MemMapDxe.inf
 
+  #
+  # Read-only survey of the SPI-HID transport carrying the internal keyboard and
+  # trackpad. Stage 1 of the input driver; see the file header.
+  #
+  AppleSiliconPkg/Drivers/AppleSpiHidDxe/AppleSpiHidDxe.inf
+
 !include T810XFamilyPkg/T810XFamilyPkg.dsc.inc
 !include AppleSiliconPkg/AppleSiliconPkg.dsc.inc
 !include AppleSiliconPkg/FrontpageDsc.inc
