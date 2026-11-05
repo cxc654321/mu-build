@@ -149,8 +149,17 @@ static int allowed(const char *path, const char *key)
     if (!strcmp(path, "/"))
         return !strcmp(key, "model") || !strcmp(key, "compatible") ||
                !strcmp(key, "board-id");
+    if (!strcmp(path, "/arm-io"))
+        return !strcmp(key, "ranges") || !strcmp(key, "#address-cells") ||
+               !strcmp(key, "#size-cells") || !strcmp(key, "compatible");
+    /* Board-audit candidates only: exact node-specific raw metadata. */
+    if (!strcmp(path, "/arm-io/spi3") && !strcmp(key, "function-spi_cs0"))
+        return 1;
+    if (!strcmp(path, "/arm-io/spi3/ipd") && !strcmp(key, "function-enable_cs"))
+        return 1;
     if (strcmp(path, "/arm-io/spi3") && strcmp(path, "/arm-io/spi3/ipd") &&
-        strcmp(path, "/arm-io/gpio")) return 0;
+        strcmp(path, "/arm-io/gpio") && strcmp(path, "/arm-io/nub-gpio"))
+        return 0;
     for (i = 0; i < sizeof(common) / sizeof(common[0]); ++i)
         if (!strcmp(key, common[i])) return 1;
     return 0;

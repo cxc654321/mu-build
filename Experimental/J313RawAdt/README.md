@@ -30,14 +30,22 @@
 
 radt_validate 只返回状态。radt_lookup 每次重新全树验证，返回借用的原始 bytes view，失败输出清零；不打印、不自动遍历导出，不导出序列号。
 
-精确绝对路径：root 用 /（不加 device-tree），只允许 /、/arm-io/spi3、/arm-io/spi3/ipd、/arm-io/gpio；没有 basename、prefix、alias 或模糊匹配。
+精确绝对路径：root 用 /（不加 device-tree），只允许 /、/arm-io、/arm-io/spi3、/arm-io/spi3/ipd、/arm-io/gpio、/arm-io/nub-gpio；没有 basename、prefix、alias 或模糊匹配。
 
 - root 属性：model、compatible、board-id。
-- 其余三条路径属性：name、compatible、reg、interrupts、interrupt-parent、AAPL,phandle、#gpio-cells、gpio-controller、function-spi_en、function-reset、function-gpio、function-irq、clock-gates、clock-frequency。
+- /arm-io 仅允许 ranges、#address-cells、#size-cells、compatible（不开放 name/reg）。
+- spi3、ipd、gpio、nub-gpio 四条路径共享原有属性：name、compatible、reg、interrupts、interrupt-parent、AAPL,phandle、#gpio-cells、gpio-controller、function-spi_en、function-reset、function-gpio、function-irq、clock-gates、clock-frequency。
+- 新增 function-spi_cs0 仅限 /arm-io/spi3；function-enable_cs 仅限 /arm-io/spi3/ipd，不加入共享属性。root 仍仅上述三个非隐私字段。
 - spi3 必须实际包含完整 raw compatible token **spi-1,spimc**；ipd 还必须实际包含 **hid-transport,spi**，同时验证父 spi3。找不到、不匹配、结构错误各返回相应状态；路径存在并不硬编码为成功。
 - GPIO 仅原始路径元数据，不宣称已解析 GPIO 控制器类型、引脚或 IRQ。
 
 白名单是查询策略，不是实际 blob 中这些路径/属性均存在的证明。**ranges 地址翻译、reg cell 解码、phandle 解引用、GPIO function 执行均未实现/不支持**。reg 只是不对齐安全的原始 byte view，绝非可用 MMIO 地址。非 name/compatible 的 value 未进行设备特定语义校验，不要把它直接当 C 字符串或整数结构体。
+
+## 板级调查来源边界
+
+本次白名单扩展先核对工作区根的 [板级调查报告](../../../../artifacts/j313-board-audit/README.md)。报告来自运行中 macOS 的 **processed IODeviceTree，不是 UEFI 当前启动链 raw Apple ADT**；只提供候选路径/属性线索，不证明 raw ADT 有相同节点、token 或布局。不会把 processed tree 转为实际 raw blob 证据，也不从这些值推出硬件状态或解除 compatible 检查。
+
+新增 ranges/cell/function/provider 属性仍只返回借用的原始 bytes。没有地址转换、MMIO、GPIO/provider 解引用或引脚操作；序列号与未知属性继续拒绝。合成 fixture 采用候选名字和不透明字节，明确不是实际设备导出。本次不改 header、预算或任何固件接入。
 
 ## Host 测试
 
@@ -48,10 +56,14 @@ tmp=$(mktemp -d /tmp/j313-rawadt.XXXXXX)
 clang -std=c11 -Wall -Wextra -Werror -pedantic -O1 -g \
   -fsanitize=address,undefined -fno-omit-frame-pointer \
   raw_adt.c test_raw_adt.c -o "$tmp/test_raw_adt"
-"$tmp/test_raw_adt"
+ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1 "$tmp/test_raw_adt"
 ~~~
 
 合成测试包含正常嵌套/兄弟树、精确 lookup、空 payload、隐私白名单拒绝、缺失属性/路径、compatible 后缀伪匹配、每一个截断 prefix（独立 malloc 形成 ASan 末端红区）、1..7 字节不对齐、尾随字节、8 层成功/9 层拒绝、huge counts、全树节点/属性预算、bits24..31 高长度逐位、UINT32_MAX、无 NUL key、重复属性/同级名字、缺 name、坏 name/compatible、FDT magic，以及固定种子 30000 次随机字节/有效种子 mutation。测试不是完备性证明，不替代真实 blob 验证或持续 coverage-guided fuzzing。
+
+新增板级 synthetic fixture 覆盖六条路径的允许/拒绝矩阵、gpio/nub-gpio 全部共享属性等价、新增 function 的节点隔离、root 隐私拒绝、路径别名/前后缀/双 slash/点组件拒绝、缺失节点/属性、父子 compatible 前后缀与缺失拒绝、NUL 列表完整 token 成功、不透明 function bytes 保持不变，以及新 fixture 的每一截断 prefix。30000 次固定种子 fuzz 同时混入原 fixture 和板级 fixture mutation，并检查所有新增查询的失败清零/成功 view 边界。
+
+本机 ASan+UBSan 回归通过（exit 0，无 sanitizer 报告）。macOS 不支持显式开启 LeakSanitizer，最初 detect_leaks=1 在测试启动前报平台不支持；上面命令仅关闭 LSan，不关闭 ASan/UBSan。此处 fuzz 是确定性随机/mutation 回归，不宣称 coverage-guided fuzz 或真实 UEFI 验证。
 
 ## 许可与来源声明
 

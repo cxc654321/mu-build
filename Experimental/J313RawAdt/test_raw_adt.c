@@ -43,6 +43,126 @@ static void failure(const void *p, size_t n)
     assert(radt_lookup(p, n, &w, "/", "model", &v) != RADT_OK);
     assert(!v.data && !v.size);
 }
+/* Synthetic ADT encoding, not a captured UEFI blob or processed-tree import. */
+static const char *const common_keys[] = {
+    "name", "compatible", "reg", "interrupts", "interrupt-parent", "AAPL,phandle",
+    "#gpio-cells", "gpio-controller", "function-spi_en", "function-reset",
+    "function-gpio", "function-irq", "clock-gates", "clock-frequency"
+};
+static const unsigned char opaque[] = {0x6e,0,0,0,0x4f,0x49,0x50,0x47,
+                                      49,0,0,0,1,1,0,0};
+static void board_fixture(const char *spi_token, const char *ipd_token)
+{
+    size_t i;
+    const unsigned char cells[] = {2,0,0,0};
+    const unsigned char ranges[] = {0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,
+                                    0,0,0,0,1,0,0,0};
+    reset(); node("device-tree", 4, 1);
+    property("model", "synthetic", sizeof("synthetic"));
+    property("compatible", "synthetic,root", sizeof("synthetic,root"));
+    property("board-id", cells, sizeof(cells));
+    property("serial-number", "PRIVATE-SENTINEL", sizeof("PRIVATE-SENTINEL"));
+    node("arm-io", 4, 3);
+    property("compatible", "arm-io,t8103", sizeof("arm-io,t8103"));
+    property("ranges", ranges, sizeof(ranges));
+    property("#address-cells", cells, sizeof(cells));
+    property("#size-cells", cells, sizeof(cells));
+    node("spi3", 2, 1);
+    property("compatible", spi_token, strlen(spi_token) + 1);
+    property("function-spi_cs0", opaque, sizeof(opaque));
+    node("ipd", 2, 0);
+    property("compatible", ipd_token, strlen(ipd_token) + 1);
+    property("function-enable_cs", opaque, sizeof(opaque));
+    for (i = 0; i < 2; ++i) {
+        size_t k;
+        node(i ? "nub-gpio" : "gpio", 13, 0);
+        property("compatible", "gpio,t8101", sizeof("gpio,t8101"));
+        for (k = 2; k < sizeof(common_keys) / sizeof(common_keys[0]); ++k)
+            property(common_keys[k], opaque, !strcmp(common_keys[k], "gpio-controller") ? 0 : sizeof(opaque));
+    }
+}
+static void expect(const char *path, const char *key, radt_status status)
+{
+    radt_view v = {b, 42};
+    assert(radt_lookup(b, used, &w, path, key, &v) == status);
+    if (status != RADT_OK) assert(!v.data && !v.size);
+    else assert(v.data >= b && v.data <= b + used && v.size <= (size_t)(b + used - v.data));
+}
+static void board_tests(void)
+{
+    static const char *const paths[] = {"/", "/arm-io", "/arm-io/spi3",
+        "/arm-io/spi3/ipd", "/arm-io/gpio", "/arm-io/nub-gpio"};
+    static const char *const bus_keys[] = {"ranges", "#address-cells", "#size-cells", "compatible"};
+    static const char *const denied_paths[] = {"arm-io", "/arm-io/", "//arm-io",
+        "/arm-ioX", "/device-tree/arm-io", "/arm-io/nub-gpio/",
+        "/arm-io/nub-gpioX", "/arm-io/gpio-nub", "/nub-gpio",
+        "/arm-io//nub-gpio", "/arm-io/./nub-gpio", "/arm-io/spi3/nub-gpio",
+        "/arm-io/spi3/ipd/", "/arm-io/spi30", "/arm-io/spi3/ipdX"};
+    size_t i, j, n;
+    radt_view v;
+    unsigned char *copy;
+    board_fixture("spi-1,spimc", "hid-transport,spi");
+    assert(radt_validate(b, used, &w) == RADT_OK && w.node_count == 6);
+    for (i = 0; i < 4; ++i) expect("/arm-io", bus_keys[i], RADT_OK);
+    expect("/", "model", RADT_OK); expect("/", "compatible", RADT_OK);
+    expect("/", "board-id", RADT_OK); expect("/", "name", RADT_DENIED);
+    expect("/arm-io", "name", RADT_DENIED); expect("/arm-io", "reg", RADT_DENIED);
+    for (i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
+        expect(paths[i], "serial-number", RADT_DENIED);
+        expect(paths[i], "unknown", RADT_DENIED);
+        expect(paths[i], "function-spi_cs0", i == 2 ? RADT_OK : RADT_DENIED);
+        expect(paths[i], "function-enable_cs", i == 3 ? RADT_OK : RADT_DENIED);
+        for (j = 0; j < 3; ++j)
+            expect(paths[i], bus_keys[j], i == 1 ? RADT_OK : RADT_DENIED);
+    }
+    for (i = 0; i < sizeof(common_keys) / sizeof(common_keys[0]); ++i) {
+        expect("/arm-io/gpio", common_keys[i], RADT_OK);
+        expect("/arm-io/nub-gpio", common_keys[i], RADT_OK);
+    }
+    for (i = 0; i < sizeof(denied_paths) / sizeof(denied_paths[0]); ++i)
+        expect(denied_paths[i], "compatible", RADT_DENIED);
+    expect("/arm-io", "rangesX", RADT_DENIED);
+    expect("/arm-io/spi3", "function-spi_cs", RADT_DENIED);
+    expect("/arm-io/spi3/ipd", "function-enable_csX", RADT_DENIED);
+    assert(radt_lookup(b, used, &w, "/arm-io/spi3/ipd", "function-enable_cs", &v) == RADT_OK);
+    assert(v.size == sizeof(opaque) && !memcmp(v.data, opaque, sizeof(opaque)));
+    n = used;
+    for (i = 0; i < n; ++i) {
+        copy = malloc(i ? i : 1); assert(copy); memcpy(copy, b, i);
+        failure(copy, i); free(copy);
+    }
+    board_fixture("spi-1,spimcX", "hid-transport,spi");
+    expect("/arm-io/spi3", "function-spi_cs0", RADT_INCOMPATIBLE);
+    expect("/arm-io/spi3/ipd", "function-enable_cs", RADT_INCOMPATIBLE);
+    board_fixture("spi-1,spimc", "hid-transport,spiX");
+    expect("/arm-io/spi3/ipd", "function-enable_cs", RADT_INCOMPATIBLE);
+    board_fixture("Xspi-1,spimc", "hid-transport,spi");
+    expect("/arm-io/spi3", "function-spi_cs0", RADT_INCOMPATIBLE);
+    board_fixture("spi-1,spimc", "Xhid-transport,spi");
+    expect("/arm-io/spi3/ipd", "function-enable_cs", RADT_INCOMPATIBLE);
+    reset(); node("root", 0, 1); node("arm-io", 0, 1);
+    node("spi3", 2, 1);
+    property("compatible", "other\0spi-1,spimc", sizeof("other\0spi-1,spimc"));
+    property("function-spi_cs0", opaque, sizeof(opaque));
+    node("ipd", 2, 0);
+    property("compatible", "other\0hid-transport,spi", sizeof("other\0hid-transport,spi"));
+    property("function-enable_cs", opaque, sizeof(opaque));
+    expect("/arm-io/spi3", "function-spi_cs0", RADT_OK);
+    expect("/arm-io/spi3/ipd", "function-enable_cs", RADT_OK);
+    reset(); node("root", 0, 1); node("arm-io", 0, 1);
+    node("spi3", 1, 1); property("function-spi_cs0", opaque, sizeof(opaque));
+    node("ipd", 1, 0); property("function-enable_cs", opaque, sizeof(opaque));
+    expect("/arm-io/spi3", "function-spi_cs0", RADT_INCOMPATIBLE);
+    expect("/arm-io/spi3/ipd", "function-enable_cs", RADT_INCOMPATIBLE);
+    reset(); node("root", 0, 1); node("elsewhere", 0, 2);
+    node("arm-io", 0, 0); node("nub-gpio", 0, 0);
+    expect("/arm-io", "ranges", RADT_NOT_FOUND);
+    expect("/arm-io/nub-gpio", "reg", RADT_NOT_FOUND);
+    valid(); expect("/arm-io", "ranges", RADT_NOT_FOUND);
+    expect("/arm-io/nub-gpio", "reg", RADT_NOT_FOUND);
+    expect("/arm-io/spi3", "function-spi_cs0", RADT_NOT_FOUND);
+    expect("/arm-io/spi3/ipd", "function-enable_cs", RADT_NOT_FOUND);
+}
 static uint32_t rng = 0x12345678;
 static uint32_t random32(void)
 { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return rng; }
@@ -50,6 +170,7 @@ int main(void)
 {
     size_t i, j, n, at; radt_view v;
     unsigned char *copy;
+    board_tests();
     valid(); n = used;
     assert(radt_validate(b, used, &w) == RADT_OK);
     assert(w.node_count == 5);
@@ -120,10 +241,24 @@ int main(void)
     assert(radt_validate(b, (size_t)RADT_BYTES + 1, &w) == RADT_BUDGET);
     /* Random bytes and structure-preserving seed mutations, deterministic. */
     for (i = 0; i < 30000; ++i) {
-        if (i & 1) { valid(); for (j = 0; j < 1 + i % 8; ++j)
+        if (i & 1) {
+            if (i & 2) board_fixture("spi-1,spimc", "hid-transport,spi");
+            else valid();
+            for (j = 0; j < 1 + i % 8; ++j)
             b[random32() % used] = (unsigned char)random32(); }
         else { used = random32() % 2048;
             for (j = 0; j < used; ++j) b[j] = (unsigned char)random32(); }
+        {
+            static const char *const paths[] = {"/arm-io", "/arm-io", "/arm-io",
+                "/arm-io", "/arm-io/nub-gpio", "/arm-io/spi3", "/arm-io/spi3/ipd"};
+            static const char *const keys[] = {"ranges", "#address-cells", "#size-cells",
+                "compatible", "reg", "function-spi_cs0", "function-enable_cs"};
+            for (j = 0; j < sizeof(paths) / sizeof(paths[0]); ++j) {
+                if (radt_lookup(b, used, &w, paths[j], keys[j], &v) != RADT_OK)
+                    assert(!v.data && !v.size);
+                else assert(v.data >= b && v.data <= b + used && v.size <= (size_t)(b + used - v.data));
+            }
+        }
         (void)radt_validate(b, used, &w);
         if (radt_lookup(b, used, &w, "/arm-io/spi3", "reg", &v) != RADT_OK)
             assert(!v.data && !v.size);
