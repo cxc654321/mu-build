@@ -8,30 +8,52 @@ Semantic sources: [HID 1.11](https://www.usb.org/document-library/device-class-d
 (Keyboard/Keypad page 0x07, including error selectors and modifiers).
 The specs are references, not files relicensed by this directory.
 
-**All fixtures are synthetic. No J313 descriptor capture or hardware validation
-has occurred. Nothing is connected to firmware, UEFI, OS input, transport, or
-MMIO. This is not evidence that a J313 keyboard will work.**
+**The 182-byte [observed descriptor](<observed_descriptor.h>) comes from a read-only
+macOS IOService registry query of the internal SPI keyboard, not a synthetic
+descriptor. See [acquisition provenance](<fixtures/SOURCE.md>) and
+[allowlisted source metadata](<fixtures/source.json>). SHA-256:
+`5ad48fbaddbae4d5806c4dbc27c842e535e2954cd140e208494cf4f17fbc47c7`.
+All input reports used here are SYNTHETIC: no actual key/input reports were
+captured. Tests perform no hardware communication and are not connected to
+firmware, UEFI, OS input, transport, or MMIO. No hardware validation or keyboard
+functionality is claimed.**
+
+The original restricted parser returned `HK_UNSUPPORTED` for this descriptor.
+The expanded parser tracks these independent payload lengths (ID byte excluded):
+
+| Report ID | Input bits | Output bits | Feature bits | Input bytes including ID |
+| --- | ---: | ---: | ---: | ---: |
+| 0x01 | 72 | 8 | 0 | 10 |
+| 0x52 | 8 | 0 | 0 | 2 |
+| 0x3f | 512 | 0 | 0 | 65 |
+| 0x09 | 0 | 0 | 24 | none (`HK_UNKNOWN_REPORT` on decode) |
 
 ## Supported deliberately narrow subset
 
-- One top-level Generic Desktop / Keyboard Application collection, no nesting.
-- Short items only. Global Usage Page (1 for collection, 7 for keys), unsigned
+- Sequential top-level Application collections, no nesting; at least one keyboard
+  Input field required overall. Non-keyboard pages are accepted for length accounting.
+- Short items only. Global Usage Page (7 for emitted keys), unsigned
   nonnegative Logical Minimum/Maximum, Report Size/Count and Report ID.
 - Local Usage lists OR one Usage Minimum/Maximum range; not mixed. Local state
   resets after every Main item. Page changes with pending local usages rejected.
 - Input flags exactly 0 (Data/Array/Absolute), 2 (Data/Variable/Absolute), or
-  1 (Constant padding). Constants consume offsets but not keys; payload padding
+  1 (Constant padding); 0x22 is additionally allowed for ignored non-keyboard Input.
+  Constants and non-keyboard Input consume offsets but not keys; payload padding
   bits, including final unused byte bits, are ignored rather than assumed zero.
 - Array selectors index the explicit ordered usage table relative to Logical
   Minimum; selector values are NOT assumed to equal usage codes. Table length
   must equal the entire logical range. Usage 0 is no key, duplicate keys coalesce.
+  Keyboard usage tables cover 00..FF; reserved/non-key E8..FF produce no events.
 - Boolean variable fields (logical 0..1), including NKRO; exactly one local usage
-  per element, usage 4..E7. Size may be 1..16 bits; out-of-range values rejected.
+  per element, usage 4..FF (only 4..E7 emitted). Size may be 1..16 bits;
+  out-of-range keyboard values rejected.
 - Keyboard usages E0..E7 contribute both ordinary press/release events and a
   modifier bitmask (bit 0 E0 through bit 7 E7). No layout, Unicode, lock state,
   text mapping, or repeat synthesis.
 - No fixed 8-byte assumption: little-endian bit extraction crosses byte boundaries.
-  Payload length is derived from all Input fields including constants.
+  Payload length is derived from all Input fields including constants and ignored
+  consumer/vendor fields. Output/Feature lengths are independent and never move
+  Input offsets or create keys; this API does not transmit or decode those streams.
 - Unnumbered reports OR nonzero numbered reports; never mixed. Multiple IDs may
   be interleaved/revisited in the descriptor. Each ID accumulates its own offset.
   Decoder keeps state per ID and outputs the union, so one report cannot release
@@ -42,16 +64,19 @@ MMIO. This is not evidence that a J313 keyboard will work.**
 ## Fail-closed limits / unsupported constructs
 
 Maximum descriptor 4096 bytes, 8 report IDs, 64 data fields per ID, 4096 payload
-bits per ID, 1..16 bits per element, 232 data elements per field, and 232 local
-usages (0..E7). Constant count is bounded at 4096 and by total payload bits.
+bits per ID per stream, 1..16 bits per element, 256 keyboard data elements per
+field, and 256 local usages. Non-keyboard/constant count is bounded at 4096 and
+by total payload bits. Keyboard usages are limited to 00..FF; other pages allow
+16-bit usages but are only length-accounted, not decoded or semantically validated
+as consumer/vendor controls.
 Limit violations reject the descriptor; there is no partial acceptance.
 
-Output/Feature (including LED outputs of typical full USB boot descriptors),
-other pages (consumer/vendor/system), usages above E7, nested/multiple collections,
-long/reserved items, signed logical ranges, physical bounds, units/exponents,
+Nested collections, keyboard usages above FF, long/reserved items, signed
+logical ranges, physical bounds, units/exponents,
 Push/Pop, delimiter/designator/string locals, extended 32-bit usages, multiple or
 mixed usage ranges, implicit repeated variable usages, relative/null-state/
-wrap/nonlinear/buffered flags, and all other unlisted items are **rejected**, not
+wrap/buffered flags (and nonlinear except ignored non-keyboard Input 0x22),
+and all other unlisted items are **rejected**, not
 skipped. Even otherwise legal descriptors outside this subset will not work.
 Boot-style fixture means an input-only layout, not full boot-protocol support.
 
@@ -93,10 +118,22 @@ modifier masks, all three array error codes with transactional preservation,
 nonboot ID 5 with 3 padding bits + two 9-bit mapped selectors + modifiers,
 ID 9 overlapping state, non-byte-aligned end, full 228-key NKRO, every fixture
 prefix, unknown ID, truncated/extra reports, unsupported items, page ambiguity,
-field/ID/bit/descriptor upper bounds, and mixed ID mode rejection.
+field/ID/bit/descriptor upper bounds, and mixed ID mode rejection. The observed
+descriptor adds synthetic Shift+key/release, duplicate suppression, every array
+error in every slot, all report truncations, overlong reports, E8..FF selectors,
+consumer/vendor reports preserving held keyboard state, and feature-only ID
+rejection. A mixed-stream synthetic descriptor checks that ignored fields count
+toward Input length and Output/Feature do not pollute Input offsets.
+
+The old suite still passed before these updates: its other-page rejection removes
+ALL keyboard fields, while its injected Output/Feature items lack local usages.
+Those malformed/no-keyboard rejection cases are retained with clarified comments;
+they are not evidence that legal non-keyboard fields or Output/Feature are banned.
 
 fuzz-smoke uses fixed seed 0x313: 20,000 random/mutated descriptor/report cases,
-also correctly framed reports and every shorter payload for each fixture.
+plus pristine seeds, including the observed descriptor. Its mutation seed pool
+and the shared libFuzzer entry both include that descriptor; reports are also
+correctly framed and tested at every shorter payload for each fixture.
 The shared LLVMFuzzerTestOneInput entry exercises arbitrary descriptors, a
 length-prefixed descriptor/report split, and reports against known fixtures.
 Assertions check atomic failures, event bounds/order/range and stable repeats.

@@ -7,7 +7,9 @@
 #define HK_MAX_REPORTS 8u
 #define HK_MAX_FIELDS 64u
 #define HK_MAX_BITS 4096u
+/* Usage tables cover page 7 through FF; emitted key bitmap stays 00..E7. */
 #define HK_MAX_USAGES 232u
+#define HK_USAGE_TABLE_SIZE 256u
 #define HK_BITMAP_BYTES 29u
 #define HK_MAX_EVENTS 232u
 
@@ -19,11 +21,12 @@ typedef struct {
  uint16_t offset, count, usage_count;
  uint8_t size, variable;
  uint16_t logical_min, logical_max;
- uint8_t usages[HK_MAX_USAGES];
+ uint8_t usages[HK_USAGE_TABLE_SIZE];
 } hk_field;
 typedef struct {
  uint8_t id;
- uint16_t bits, field_count;
+ /* Independent payload lengths; bits is Input, excluding the report ID. */
+ uint16_t bits, output_bits, feature_bits, field_count;
  hk_field fields[HK_MAX_FIELDS];
 } hk_report;
 typedef struct {

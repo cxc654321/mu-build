@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "hid_keyboard.h"
 #include "fixtures.h"
+#include "observed_descriptor.h"
 #include <assert.h>
 #include <string.h>
 #include <stdlib.h>
@@ -31,9 +32,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data,size_t n) {
   size_t split=((size_t)data[0]|((size_t)data[1]<<8))%(n-1);
   if(hk_parse(data+2,split,&d)==HK_OK) exercise(data+2+split,n-2-split);
  }
- const uint8_t *f[]={boot,nonboot,nkro};
- const size_t z[]={sizeof boot,sizeof nonboot,sizeof nkro};
- for(unsigned i=0;i<3;++i) {
+ const uint8_t *f[]={boot,nonboot,nkro,observed_descriptor};
+ const size_t z[]={sizeof boot,sizeof nonboot,sizeof nkro,sizeof observed_descriptor};
+ for(size_t i=0;i<sizeof f/sizeof f[0];++i) {
   assert(hk_parse(f[i],z[i],&d)==HK_OK); exercise(data,n);
   /* Force correctly framed payloads too, not just mostly length errors. */
   for(unsigned j=0;j<d.report_count;++j) {
@@ -52,12 +53,14 @@ static uint32_t rng=0x313;
 static uint32_t next(void) { rng^=rng<<13; rng^=rng>>17; rng^=rng<<5; return rng; }
 int main(void) {
  uint8_t b[HK_MAX_DESCRIPTOR+1];
- const uint8_t *f[]={boot,nonboot,nkro};
- const size_t z[]={sizeof boot,sizeof nonboot,sizeof nkro};
+ const uint8_t *f[]={boot,nonboot,nkro,observed_descriptor};
+ const size_t z[]={sizeof boot,sizeof nonboot,sizeof nkro,sizeof observed_descriptor};
+ /* Exercise each pristine descriptor seed before deterministic mutations. */
+ for(size_t k=0;k<sizeof f/sizeof f[0];++k) LLVMFuzzerTestOneInput(f[k],z[k]);
  for(unsigned i=0;i<20000;++i) {
   size_t n=next()%sizeof b;
   if(i%2) {
-   unsigned k=next()%3; n=z[k]; memcpy(b,f[k],n);
+   unsigned k=next()%(sizeof f/sizeof f[0]); n=z[k]; memcpy(b,f[k],n);
    for(unsigned j=0;j<1+i%8;++j) b[next()%n]=(uint8_t)next();
   } else for(size_t j=0;j<n;++j) b[j]=(uint8_t)next();
   LLVMFuzzerTestOneInput(b,n);

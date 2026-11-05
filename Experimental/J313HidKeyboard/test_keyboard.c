@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "hid_keyboard.h"
 #include "fixtures.h"
+#include "observed_descriptor.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -92,6 +93,7 @@ static void boundary_test(void) {
 }
 static void rejection_test(void) {
  uint8_t b[HK_MAX_DESCRIPTOR+1];
+ /* Output/Feature injections below lack local usages: malformed, not forbidden tags. */
  const uint8_t baditems[]={0xfe,0xa4,0xb4,0x91,0xb1,0x65,0x55,0x35,0x45,0x89,0x39,0x49,0x59};
  for(size_t i=0;i<sizeof boot;++i) reject(boot,i);
  for(size_t i=0;i<sizeof nonboot;++i) reject(nonboot,i);
@@ -100,7 +102,7 @@ static void rejection_test(void) {
   memcpy(b,boot,sizeof boot-1); b[sizeof boot-1]=baditems[i];
   b[sizeof boot]=0; b[sizeof boot+1]=0xc0; reject(b,sizeof boot+2);
  }
- memcpy(b,boot,sizeof boot); b[7]=8; reject(b,sizeof boot); /* other page */
+ memcpy(b,boot,sizeof boot); b[7]=8; reject(b,sizeof boot); /* no keyboard fields remain, not a blanket other-page ban */
  memcpy(b,boot,sizeof boot); b[17]=17; reject(b,sizeof boot); /* size */
  memcpy(b,boot,sizeof boot); b[21]=6; reject(b,sizeof boot); /* relative */
  memcpy(b,boot,sizeof boot); b[sizeof boot]=0; reject(b,sizeof boot+1);
@@ -122,8 +124,86 @@ static void rejection_test(void) {
  /* Usage page change with pending local usages must never reinterpret them. */
  const uint8_t pagechange[]={5,1,9,6,0xa1,1,9,4,5,7,0xc0}; reject(pagechange,sizeof pagechange);
 }
+static const hk_report *report_id(unsigned id) {
+ for(unsigned i=0;i<d.report_count;++i) if(d.reports[i].id==id) return &d.reports[i];
+ assert(0); return NULL;
+}
+static void observed_test(void) {
+ /* Descriptor is observed; every report below is constructed, not captured. */
+ uint8_t p[11]={1,2,0xff,4,4,0,0,0,0,0xff,0};
+ uint8_t consumer[3]={0x52,0xff,0}, vendor[66], feature[]={9,0,0,0};
+ assert(sizeof observed_descriptor==182);
+ assert(hk_parse(observed_descriptor,sizeof observed_descriptor,&d)==HK_OK);
+ assert(d.numbered && d.report_count==4); hk_state_init(&s);
+ const hk_report *r=report_id(1);
+ assert(r->bits==72 && r->output_bits==8 && !r->feature_bits && r->field_count==2);
+ assert(r->fields[0].offset==0 && r->fields[0].count==8);
+ /* LED Output between modifiers and array must not move the Input offset. */
+ assert(r->fields[1].offset==16 && r->fields[1].count==6 && r->fields[1].usage_count==256);
+ r=report_id(0x52); assert(r->bits==8 && !r->field_count && !r->output_bits && !r->feature_bits);
+ r=report_id(0x3f); assert(r->bits==512 && !r->field_count && !r->output_bits && !r->feature_bits);
+ r=report_id(9); assert(!r->bits && r->feature_bits==24 && !r->output_bits && !r->field_count);
+ assert(hk_decode(&d,&s,p,10,&result)==HK_OK && result.count==2 && result.modifiers==2);
+ event(4,1); event(0xe1,1);
+ assert(hk_decode(&d,&s,p,10,&result)==HK_OK && !result.count && result.modifiers==2);
+ hk_state held=s;
+ memset(vendor,0xff,sizeof vendor); vendor[0]=0x3f;
+ assert(hk_decode(&d,&s,consumer,2,&result)==HK_OK && !result.count && result.modifiers==2);
+ assert(!memcmp(&held,&s,sizeof s));
+ assert(hk_decode(&d,&s,vendor,65,&result)==HK_OK && !result.count && result.modifiers==2);
+ assert(!memcmp(&held,&s,sizeof s));
+ consumer[1]=0; memset(vendor+1,0,sizeof vendor-1);
+ assert(hk_decode(&d,&s,consumer,2,&result)==HK_OK && !result.count && result.modifiers==2);
+ assert(hk_decode(&d,&s,vendor,65,&result)==HK_OK && !result.count && result.modifiers==2);
+ assert(!memcmp(&held,&s,sizeof s));
+ for(size_t n=0;n<10;++n) unchanged(p,n,HK_TRUNCATED);
+ unchanged(p,11,HK_INVALID);
+ for(size_t n=0;n<2;++n) unchanged(consumer,n,HK_TRUNCATED);
+ unchanged(consumer,3,HK_INVALID);
+ for(size_t n=0;n<65;++n) unchanged(vendor,n,HK_TRUNCATED);
+ unchanged(vendor,66,HK_INVALID);
+ for(size_t n=1;n<=sizeof feature;++n) unchanged(feature,n,HK_UNKNOWN_REPORT);
+ feature[0]=0x42; unchanged(feature,sizeof feature,HK_UNKNOWN_REPORT);
+ /* Error in any of six slots preserves keys AND previous modifiers. */
+ for(unsigned slot=3;slot<9;++slot) for(unsigned err=1;err<=3;++err) {
+  uint8_t bad[10]={1,0,0,0,0,0,0,0,0,0}; bad[slot]=(uint8_t)err;
+  unchanged(bad,sizeof bad,HK_ROLLOVER);
+ }
+ /* Full observed 00..FF selector table: E8..FF are ignored, not bitmap indexes. */
+ for(unsigned u=0xe8;u<=0xff;++u) {
+  p[4]=(uint8_t)u;
+  assert(hk_decode(&d,&s,p,10,&result)==HK_OK && !result.count && result.modifiers==2);
+ }
+ memset(p+1,0,9);
+ assert(hk_decode(&d,&s,p,10,&result)==HK_OK && result.count==2 && !result.modifiers);
+ event(4,0); event(0xe1,0);
+}
+static void ignored_fields_test(void) {
+ /* Legal LED/consumer/vendor fields consume length, never keyboard events.
+  * Output and Feature interleave Input on the same ID with independent offsets. */
+ const uint8_t desc[]={5,1,9,6,0xa1,1,0x85,1,0x15,0,0x25,1,0x75,1,0x95,1,
+  5,7,9,4,0x81,2,
+  5,8,9,1,0x91,2,9,2,0xb1,2,
+  5,0x0c,9,0xcd,0x81,2,
+  6,0,0xff,9,6,0x75,7,0x81,2,
+  5,7,9,5,0x75,1,0x81,2,0xc0};
+ uint8_t p[]={1,0xfe,1};
+ assert(hk_parse(desc,sizeof desc,&d)==HK_OK); hk_state_init(&s);
+ const hk_report *r=report_id(1);
+ assert(r->bits==10 && r->output_bits==1 && r->feature_bits==1 && r->field_count==2);
+ assert(r->fields[0].offset==0 && r->fields[1].offset==9);
+ assert(hk_decode(&d,&s,p,sizeof p,&result)==HK_OK && !result.count);
+ p[1]|=1; p[2]|=2;
+ assert(hk_decode(&d,&s,p,sizeof p,&result)==HK_OK && result.count==2);
+ event(4,1); event(5,1);
+ p[1]=1; p[2]=2;
+ assert(hk_decode(&d,&s,p,sizeof p,&result)==HK_OK && !result.count);
+ p[1]=0; p[2]=0;
+ assert(hk_decode(&d,&s,p,sizeof p,&result)==HK_OK && result.count==2);
+ event(4,0); event(5,0);
+}
 int main(void) {
- boot_test(); nonboot_test(); nkro_test(); boundary_test(); rejection_test();
- puts("PASS: synthetic boot/nonboot/NKRO, transactional errors, limits, rejection");
+ boot_test(); nonboot_test(); nkro_test(); boundary_test(); rejection_test(); observed_test(); ignored_fields_test();
+ puts("PASS: boot/nonboot/NKRO + observed descriptor/synthetic reports, ignored streams, transactional errors, limits");
  return 0;
 }

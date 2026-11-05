@@ -5,7 +5,7 @@ SAN = -fsanitize=address,undefined -fno-omit-frame-pointer
 .PHONY: test sanitize fuzz-smoke fuzz
 build:
 	mkdir -p build
-build/test: hid_keyboard.c hid_keyboard.h test_keyboard.c fixtures.h | build
+build/test: hid_keyboard.c hid_keyboard.h test_keyboard.c fixtures.h observed_descriptor.h | build
 	$(CC) $(CFLAGS) hid_keyboard.c test_keyboard.c -o $@
 test: build/test
 	./build/test

@@ -1,0 +1,33 @@
+{
+  "properties": {
+    "Product": "Apple Internal Keyboard / Trackpad",
+    "Transport": "SPI",
+    "VendorID": 1452,
+    "ProductID": 641,
+    "PrimaryUsagePage": 1,
+    "PrimaryUsage": 6
+  },
+  "spi_parent_class_chain": [
+    "AppleHIDTransportDeviceSPI",
+    "AppleHIDTransportProtocolHIDSPI",
+    "AppleHIDTransportInterface",
+    "AppleHIDTransportHIDDevice"
+  ],
+  "keyboard_driver_class": "AppleHIDKeyboardEventDriverV2",
+  "IOHIDInterface_descriptor_matches": true,
+  "byte_length": 182,
+  "sha256": "5ad48fbaddbae4d5806c4dbc27c842e535e2954cd140e208494cf4f17fbc47c7",
+  "query_command": [
+    "/usr/sbin/ioreg",
+    "-a",
+    "-r",
+    "-c",
+    "AppleHIDTransportDeviceSPI",
+    "-p",
+    "IOService",
+    "-l",
+    "-w",
+    "0"
+  ],
+  "queried_at_utc": "2026-11-05T12:14:47.557016+00:00"
+}

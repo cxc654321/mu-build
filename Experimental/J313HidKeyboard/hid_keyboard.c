@@ -14,7 +14,7 @@ hk_status hk_parse(const uint8_t *b, size_t n, hk_descriptor *out)
  unsigned have_lo = 0, have_hi = 0, opened = 0, closed = 0;
  unsigned id = 0, mode = 0, uc = 0, range = 0;
  uint32_t umin = 0;
- uint8_t usages[HK_MAX_USAGES];
+ uint16_t usages[HK_USAGE_TABLE_SIZE];
  if (!out) return HK_INVALID;
  memset(out, 0, sizeof(*out));
  if (!b || !n) return HK_INVALID;
@@ -27,12 +27,11 @@ hk_status hk_parse(const uint8_t *b, size_t n, hk_descriptor *out)
   if (len == 3) len = 4;
   if (len > n - pos) FAIL(HK_TRUNCATED);
   for (unsigned j = 0; j < len; ++j) v |= (uint32_t)b[pos++] << (8u*j);
-  if (closed) FAIL(HK_UNSUPPORTED);
   if (type == 1) {
    if (!len) FAIL(HK_INVALID);
    switch (tag) {
    case 0:
-    if (uc || range || (v != 1 && v != 7)) FAIL(HK_UNSUPPORTED);
+    if (uc || range || v > 65535u) FAIL(HK_UNSUPPORTED);
     page = v; break;
    case 1:
     if (v & (UINT32_C(1) << (len*8u-1u))) FAIL(HK_UNSUPPORTED);
@@ -51,33 +50,37 @@ hk_status hk_parse(const uint8_t *b, size_t n, hk_descriptor *out)
    }
   } else if (type == 2) {
    if (!len || len == 4) FAIL(HK_UNSUPPORTED);
-   if (v >= HK_MAX_USAGES) FAIL(HK_UNSUPPORTED);
+   if (page == 7 && v >= HK_USAGE_TABLE_SIZE) FAIL(HK_UNSUPPORTED);
    if (tag == 0) {
     if (range) FAIL(HK_UNSUPPORTED);
-    if (uc == HK_MAX_USAGES) FAIL(HK_LIMIT);
-    usages[uc++] = (uint8_t)v;
+    if (uc == HK_USAGE_TABLE_SIZE) FAIL(HK_LIMIT);
+    usages[uc++] = (uint16_t)v;
    } else if (tag == 1) {
     if (range || uc) FAIL(HK_UNSUPPORTED);
     range = 1; umin = v;
    } else if (tag == 2) {
     if (range != 1 || v < umin) FAIL(HK_INVALID);
-    for (uint32_t u = umin; u <= v; ++u) usages[uc++] = (uint8_t)u;
+    if (v - umin + 1 > HK_USAGE_TABLE_SIZE) FAIL(HK_LIMIT);
+    for (uint32_t u = umin; u <= v; ++u) usages[uc++] = (uint16_t)u;
     range = 2;
    } else FAIL(HK_UNSUPPORTED);
   } else if (type == 0) {
    if (range == 1) FAIL(HK_INVALID);
    if (tag == 10) {
-    if (len != 1 || v != 1 || opened || page != 1 || uc != 1 || usages[0] != 6)
+    if (len != 1 || v != 1 || opened || !page || uc != 1)
      FAIL(HK_UNSUPPORTED);
     opened = 1;
    } else if (tag == 12) {
     if (len || !opened || uc) FAIL(HK_INVALID);
-    closed = 1;
-   } else if (tag == 8) {
+    opened = 0; closed = 1;
+   } else if (tag == 8 || tag == 9 || tag == 11) {
     hk_report *r = NULL;
+    uint16_t *bits;
     unsigned constant = v & 1u, variable = v & 2u;
     if (!opened || !len || !size || !count) FAIL(HK_INVALID);
-    if (v != 0 && v != 1 && v != 2) FAIL(HK_UNSUPPORTED);
+    /* Non-linear (bit 5) is accepted only for ignored non-keyboard Input. */
+    if (v != 0 && v != 1 && v != 2 &&
+        !(tag == 8 && page != 7 && v == 0x22)) FAIL(HK_UNSUPPORTED);
     if (!mode) mode = 1;
     for (unsigned j = 0; j < out->report_count; ++j)
      if (out->reports[j].id == id) r = &out->reports[j];
@@ -85,12 +88,17 @@ hk_status hk_parse(const uint8_t *b, size_t n, hk_descriptor *out)
      if (out->report_count == HK_MAX_REPORTS) FAIL(HK_LIMIT);
      r = &out->reports[out->report_count++]; r->id = (uint8_t)id;
     }
-    if (size * count > HK_MAX_BITS - r->bits) FAIL(HK_LIMIT);
+    bits = tag == 8 ? &r->bits : tag == 9 ? &r->output_bits : &r->feature_bits;
+    if (size * count > HK_MAX_BITS - *bits) FAIL(HK_LIMIT);
     if (!constant) {
      hk_field *f;
-     if (page != 7 || !have_lo || !have_hi || lo > hi || hi >= (UINT32_C(1) << size))
+     if (!page || !have_lo || !have_hi || lo > hi || hi >= (UINT32_C(1) << size))
       FAIL(HK_UNSUPPORTED);
-     if (!uc || count > HK_MAX_USAGES) FAIL(HK_UNSUPPORTED);
+     if (!uc) FAIL(HK_UNSUPPORTED);
+     /* Non-keyboard fields and non-Input streams never become key fields.
+      * Their bounded payload lengths are still tracked independently. */
+     if (tag == 8 && page == 7) {
+     if (count > HK_USAGE_TABLE_SIZE) FAIL(HK_UNSUPPORTED);
      if (variable) {
       if (lo != 0 || hi != 1 || uc != count) FAIL(HK_UNSUPPORTED);
       for (unsigned j = 0; j < uc; ++j) if (usages[j] < 4) FAIL(HK_UNSUPPORTED);
@@ -100,16 +108,21 @@ hk_status hk_parse(const uint8_t *b, size_t n, hk_descriptor *out)
      f->offset = r->bits; f->size = (uint8_t)size; f->count = (uint16_t)count;
      f->variable = variable != 0; f->logical_min = (uint16_t)lo;
      f->logical_max = (uint16_t)hi; f->usage_count = (uint16_t)uc;
-     memcpy(f->usages, usages, uc);
+     for (unsigned j = 0; j < uc; ++j) f->usages[j] = (uint8_t)usages[j];
+     }
     }
-    r->bits = (uint16_t)(r->bits + size * count);
+    *bits = (uint16_t)(*bits + size * count);
    } else FAIL(HK_UNSUPPORTED);
    uc = 0; range = 0;
   } else FAIL(HK_UNSUPPORTED);
  }
- if (!closed || !out->report_count || uc || range) FAIL(HK_INVALID);
- for (unsigned j = 0; j < out->report_count; ++j)
-  if (!out->reports[j].field_count) FAIL(HK_UNSUPPORTED);
+ if (!closed || opened || !out->report_count || uc || range) FAIL(HK_INVALID);
+ {
+  unsigned keyboard_fields = 0;
+  for (unsigned j = 0; j < out->report_count; ++j)
+   keyboard_fields += out->reports[j].field_count;
+  if (!keyboard_fields) FAIL(HK_UNSUPPORTED);
+ }
  out->valid = HK_MAGIC;
  return HK_OK;
 }
@@ -138,6 +151,7 @@ hk_status hk_decode(const hk_descriptor *d, hk_state *s,
   if (d->reports[j].id == (d->numbered ? b[0] : 0)) index = j;
  if (index == HK_MAX_REPORTS) return HK_UNKNOWN_REPORT;
  r = &d->reports[index];
+ if (!r->bits) return HK_UNKNOWN_REPORT;
  if (d->numbered) { ++b; --n; }
  if (n < (r->bits + 7u)/8u) return HK_TRUNCATED;
  if (n != (r->bits + 7u)/8u) return HK_INVALID;
@@ -151,7 +165,8 @@ hk_status hk_decode(const hk_descriptor *d, hk_state *s,
    else u = f->usages[v - f->logical_min];
    if (!u) continue;
    if (u <= 3) return HK_ROLLOVER;
-   set(next, u);
+   /* E8..FF are reserved/non-key usages: ignore, never index the bitmap. */
+   if (u < HK_MAX_USAGES) set(next, u);
   }
  }
  for (unsigned u = 4; u < HK_MAX_USAGES; ++u) {
