@@ -10,6 +10,8 @@
 #include <Library/DebugAgentLib.h>
 #include <Library/DebugLib.h>
 #include <Library/AppleDTLib.h>
+#include <Library/PcdLib.h>
+#include "AdtCopyPlan.h"
 
 #define ALIGN_UP(x, a)   (((x) + ((a) - 1)) & ~((a) - 1))
 
@@ -32,10 +34,18 @@ EarlySetup (
 
   struct boot_args *BootArgs = (struct boot_args *)BootArgsAddr;
   VOID             *AdtSource;
+  ADT_COPY_PLAN    Plan;
 
-  AdtSource = (VOID *)((UINTN)BootArgs->devtree -
-                       (UINTN)BootArgs->virt_base +
-                       (UINTN)BootArgs->phys_base);
+  // The loader must still supply a readable boot_args header. This checks
+  // arithmetic/layout, not ownership of every loader/device live allocation.
+  if (AppleAdtPlanCopy (BootArgs, (UINT64)(UINTN)BootArgsAddr,
+        (UINT64)(UINTN)PcdBootArgsDest, (UINT64)(UINTN)PcdAdtDest,
+        PcdGet64 (PcdFdBaseAddress), FixedPcdGet32 (PcdFdSize),
+        FixedPcdGet32 (PcdSystemMemoryUefiRegionSize), &Plan) != AdtCopyGeometryValid) {
+    DEBUG ((DEBUG_ERROR, "EARLY: invalid ADT copy geometry; no copy performed\n"));
+    return FALSE;
+  }
+  AdtSource = (VOID *)(UINTN)Plan.AdtSource.Base;
 
   DEBUG ((
     DEBUG_ERROR,
@@ -47,7 +57,7 @@ EarlySetup (
     BootArgs->devtree_size
     ));
 
-  CopyMem(PcdBootArgsDest, BootArgsAddr, sizeof(struct boot_args));
+  CopyMem(PcdBootArgsDest, BootArgsAddr, (UINTN)Plan.BootArgsSize);
   DEBUG ((DEBUG_ERROR, "J813 EARLY: boot args copied\n"));
   CopyMem(PcdAdtDest, AdtSource, BootArgs->devtree_size);
   DEBUG ((DEBUG_ERROR, "J813 EARLY: ADT copied\n"));

@@ -12,6 +12,7 @@
 
 [Sources.common]
   AdtParser.c
+  AdtCopyPlan.c
   PrePi.c
 
 #Comment/uncomment either line out if you want SEC phase to be relocatable or not relocatable
