@@ -48,19 +48,28 @@ PLATFORM_GPIO_CONTROLLER *AppleSiliconPlatformGpioController;
 //
 
 EFI_STATUS AppleEmbeddedGpioControllerLocate(IN EMBEDDED_GPIO_PIN Gpio, OUT UINTN *ControllerIndex, OUT UINTN *ControllerOffset, OUT UINTN *GpioRegisterBase) {
+  //
+  // A miss on one controller must not fail the search, and a hit must not be
+  // overwritten by a later miss: keep scanning and return immediately on the
+  // controller whose range contains Gpio. The old offset used
+  // Gpio % InternalGpioCount, which is only correct when GpioIndex is an exact
+  // multiple of the count; the offset within a controller is Gpio - GpioIndex.
+  // Compare with a subtraction instead of GpioIndex + InternalGpioCount so a
+  // range whose end would overflow cannot match accidentally.
+  //
   for(UINT32 Index = 0; Index < AppleSiliconPlatformGpioController->GpioControllerCount; Index++) {
-    if((Gpio >= AppleSiliconPlatformGpioController->GpioController[Index].GpioIndex) && (Gpio < AppleSiliconPlatformGpioController->GpioController[Index].GpioIndex + AppleSiliconPlatformGpioController->GpioController[Index].InternalGpioCount)) {
+    UINTN Base = AppleSiliconPlatformGpioController->GpioController[Index].GpioIndex;
+    UINTN Count = AppleSiliconPlatformGpioController->GpioController[Index].InternalGpioCount;
+    if((Count != 0) && (Gpio >= Base) && ((Gpio - Base) < Count)) {
       *ControllerIndex = Index;
-      *ControllerOffset = Gpio % AppleSiliconPlatformGpioController->GpioController[Index].InternalGpioCount;
+      *ControllerOffset = Gpio - Base;
       *GpioRegisterBase = AppleSiliconPlatformGpioController->GpioController[Index].RegisterBase;
-      DEBUG((DEBUG_INFO, "%a - Found GPIO with index 0x%x, Offset 0x%llx, GPIO register base 0x%llx\n", __FUNCTION__, Index, (Gpio % AppleSiliconPlatformGpioController->GpioController[Index].InternalGpioCount), AppleSiliconPlatformGpioController->GpioController[Index].RegisterBase));
-    }
-    else {
-      DEBUG((DEBUG_ERROR, "%a - GPIO 0x%x not found\n", Index));
-      return EFI_NOT_FOUND;
+      DEBUG((DEBUG_INFO, "%a - Found GPIO with index 0x%x, Offset 0x%llx, GPIO register base 0x%llx\n", __FUNCTION__, Index, (Gpio - Base), AppleSiliconPlatformGpioController->GpioController[Index].RegisterBase));
+      return EFI_SUCCESS;
     }
   }
-  return EFI_SUCCESS;
+  DEBUG((DEBUG_ERROR, "%a - GPIO 0x%x not found in any controller\n", __FUNCTION__, Gpio));
+  return EFI_NOT_FOUND;
 }
 
 STATIC UINTN EFIAPI AppleEmbeddedGpioControllerGetRegister(IN UINTN RegisterBase, IN UINTN Offset) {
@@ -70,10 +79,15 @@ STATIC UINTN EFIAPI AppleEmbeddedGpioControllerGetRegister(IN UINTN RegisterBase
 
 STATIC VOID EFIAPI AppleEmbeddedGpioControllerSetRegister(IN UINTN RegisterBase, IN UINTN Offset, IN UINTN Bitmask, IN UINTN Value) {
   UINTN OriginalValue = MmioRead32(RegisterBase + GPIO_REG(Offset));
-  UINTN UpdatedValue = OriginalValue & ((~Bitmask));
-  UpdatedValue = (UpdatedValue | Value);
+  //
+  // Write the read-modify-write result, not the raw field value: writing Value
+  // directly would zero every bit outside the mask (pull, drive, lock and other
+  // settings this function must preserve). Value itself is masked so stray bits
+  // outside the declared field cannot leak into the register either.
+  //
+  UINTN UpdatedValue = (OriginalValue & ~Bitmask) | (Value & Bitmask);
   DEBUG((DEBUG_INFO, "%a - doing MMIO write of 0x%llx\n", __FUNCTION__, UpdatedValue));
-  MmioWrite32((RegisterBase + GPIO_REG(Offset)), Value);
+  MmioWrite32((RegisterBase + GPIO_REG(Offset)), UpdatedValue);
 }
 
 //
@@ -95,6 +109,7 @@ EFI_STATUS EFIAPI AppleEmbeddedGpioGetGpio(IN EMBEDDED_GPIO *This, IN EMBEDDED_G
   if(EFI_ERROR(Status)) {
     DEBUG((DEBUG_INFO, "%a - GPIO not found\n", __FUNCTION__));
     ASSERT(FALSE);
+    return Status; // RELEASE builds must not MMIO an uninitialized base/offset.
   }
   if(Value == NULL) {
     DEBUG((DEBUG_INFO, "%a - cannot get status if output pointer is NULL\n", __FUNCTION__));
@@ -125,6 +140,7 @@ EFI_STATUS EFIAPI AppleEmbeddedGpioSetGpio(IN EMBEDDED_GPIO *This, IN EMBEDDED_G
   if(EFI_ERROR(Status)) {
     DEBUG((DEBUG_INFO, "%a - GPIO not found\n", __FUNCTION__));
     ASSERT(FALSE);
+    return Status; // RELEASE builds must not MMIO an uninitialized base/offset.
   }
   //
   // Only input/output directions are supported, anything else
@@ -158,6 +174,7 @@ EFI_STATUS EFIAPI AppleEmbeddedGpioControllerGetMode(IN EMBEDDED_GPIO *This, IN 
   if(EFI_ERROR(Status)) {
     DEBUG((DEBUG_INFO, "%a - GPIO not found\n", __FUNCTION__));
     ASSERT(FALSE);
+    return Status; // RELEASE builds must not MMIO an uninitialized base/offset.
   }
   if(Mode == NULL) {
     DEBUG((DEBUG_ERROR, "%a - GPIO mode request cannot be NULL\n", __FUNCTION__));

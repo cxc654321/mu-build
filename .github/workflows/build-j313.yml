@@ -151,6 +151,7 @@ jobs:
           python3 -B Tests/test_j313_sre_handoff.py
           python3 -B Tests/test_swm_boot_gate.py
           python3 -B Tests/test_j313_boot_failure_diagnostics.py
+          python3 -B Tests/test_apple_gpio_rmw.py
           SWM_SOURCE_TREE="$PWD" python3 -B Tests/test_swm_readiness.py
           python3 Tools/swm-readiness.py --tree "$PWD" --apply
 
