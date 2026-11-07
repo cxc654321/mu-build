@@ -234,4 +234,109 @@ class TestContainer(TestBoard):
             self.assertEqual(f(data,len(b)+1,C.byref(r),None),int(name.endswith('Ex')))
         self.check(b,True)
 
+class TestIdentityBypass(TestBoard):
+    def experimental(self,b):
+        f=self.lib.J313BoardResourcesParseExperimentalIdentityBypass
+        f.argtypes=[C.c_void_p,C.c_size_t,C.POINTER(Resources),C.POINTER(Diagnostic),C.POINTER(C.c_uint32)]
+        f.restype=C.c_int
+        data=C.create_string_buffer(b);r=Resources();d=Diagnostic();mask=C.c_uint32(0xffffffff)
+        C.memset(C.byref(r),0xa5,C.sizeof(r))
+        status=f(data,len(b),C.byref(r),C.byref(d),C.byref(mask))
+        if status:self.assertEqual(bytes(r),bytes(C.sizeof(r)))
+        return status,r,d,mask.value
+
+    def mismatches(self):
+        return [
+            (prop('target-type',b'j313\0'),prop('target-type',b'j314\0')),
+            (prop('chip-id',u32(0x8103)),prop('chip-id',u32(0x8104))),
+            (prop('compatible',b'arm-io,t8103\0'),prop('compatible',b'arm-io,t8104\0')),
+            (prop('compatible',b'spi-1,spimc\0'),prop('compatible',b'spi-2,spimc\0')),
+            (prop('compatible',b'hid-transport,spi\0'),prop('compatible',b'hid-transport,usb\0')),
+        ]
+
+    def strict_identity(self,b):
+        data=C.create_string_buffer(b);r=Resources();d=Diagnostic()
+        self.assertEqual(self.parse(data,len(b),C.byref(r)),2)
+        self.assertEqual(bytes(r),bytes(C.sizeof(r)))
+        for name in ['J313BoardResourcesParseEx','J313BoardResourcesParseContainer']:
+            f=getattr(self.lib,name)
+            f.argtypes=[C.c_void_p,C.c_size_t,C.POINTER(Resources),C.POINTER(Diagnostic)]
+            C.memset(C.byref(r),0xa5,C.sizeof(r))
+            self.assertEqual(f(data,len(b),C.byref(r),C.byref(d)),2)
+            self.assertEqual(bytes(r),bytes(C.sizeof(r)))
+            self.assertEqual(d.reason,0)
+
+    def test_each_mismatch_and_combined_mask(self):
+        good=fixture();combined=good
+        for bit,(old,new) in enumerate(self.mismatches()):
+            with self.subTest(bit=bit):
+                bad=good.replace(old,new,1);combined=combined.replace(old,new,1)
+                self.strict_identity(bad)
+                status,r,d,mask=self.experimental(bad)
+                self.assertEqual((status,mask),(0,1<<bit))
+                self.assertEqual(bytes(r),bytes(self.check(good,True)))
+                self.assertEqual((r.target,r.chip),(b'j313',0x8103)) # assumptions only
+        self.strict_identity(combined)
+        self.assertEqual(self.experimental(combined)[3],0x1f)
+        self.assertEqual(self.experimental(good)[3],0)
+
+    def test_missing_identity_properties_and_nodes(self):
+        for bit,(old,_) in enumerate(self.mismatches()):
+            # Rename identity property, preserving valid node/property counts.
+            bad=fixture().replace(old,b'ignored'.ljust(32,b'\0')+old[32:],1)
+            self.strict_identity(bad)
+            status,r,d,mask=self.experimental(bad)
+            self.assertEqual((status,mask),(0,1<<bit))
+        # Missing resource-bearing nodes still fail; no fabricated resources.
+        for name,mask in [('arm-io',0x1c),('spi3',0x18)]:
+            bad=fixture().replace(prop('name',name.encode()+b'\0'),prop('name',b'absent\0'),1)
+            self.strict_identity(bad)
+            status,r,d,actual=self.experimental(bad)
+            self.assertEqual((status,actual),(3,mask))
+
+    def test_resource_and_power_checks_remain_enforced(self):
+        good=fixture(target=b'j314\0')
+        cases=[
+            (good.replace(reg(0x3510c000,0x4000),reg(0x35110000,0x4000),1),3),
+            (good.replace(reg(0x3c100000,0x4000),reg(0x3c100000,0x100004),1),3),
+            (good.replace(struct.pack('<QQQ',0,0x200000000,0x100000000),struct.pack('<QQQ',0,0x200000000,0),1),3),
+            (good.replace(prop('clock-gates',u32(0x34)),prop('clock-gates',u32(0x35)),1),4),
+            (fixture(True,target=b'j314\0'),4),
+            (good.replace(reg(0x3d280000,0x4000),reg(0x3d290000,0x4000),1),4),
+            (good.replace(prop('ps-regs',struct.pack('<IIIIII',0,0,0,1,0,0)),prop('ps-regs',b'bad'),1),4),
+        ]
+        for bad,code in cases:
+            for tail in [b'',fixture()]:
+                status,r,d,mask=self.experimental(bad+tail)
+                self.assertEqual((status,mask,d.tree_complete),(code,1,1))
+
+    def test_structure_prefixes_and_tail_policy(self):
+        b=fixture(target=b'j314\0')
+        for n in range(len(b)):
+            status,r,d,mask=self.experimental(b[:n])
+            self.assertEqual((status,mask,d.tree_complete),(1,0,0))
+        for tail in [b'',b'\0'*4096,b'\xff',fixture(True),fixture()]:
+            status,r,d,mask=self.experimental(b+tail)
+            self.assertEqual((status,mask),(0,1))
+            self.assertEqual((d.consumed,d.tail_size,d.tree_complete,d.tail_all_zero),
+                             (len(b),len(tail),1,int(not any(tail))))
+        bad=b[:40]+u32(0x7fffffff)+b[44:]
+        self.assertEqual(self.experimental(bad)[0],1)
+
+    def test_experimental_optional_outputs_and_diagnostic_abi(self):
+        class Guard(C.Structure):
+            _fields_=[('d',Diagnostic),('guard',C.c_ubyte*32)]
+        b=fixture(target=b'j314\0');data=C.create_string_buffer(b);r=Resources()
+        self.experimental(b) # install prototype
+        f=self.lib.J313BoardResourcesParseExperimentalIdentityBypass
+        g=Guard();C.memset(C.byref(g),0xa5,C.sizeof(g))
+        self.assertEqual(f(data,len(b),C.byref(r),C.byref(g.d),None),0)
+        self.assertEqual(bytes(g.guard),b'\xa5'*32)
+        mask=C.c_uint32(0xffffffff)
+        self.assertEqual(f(data,len(b),C.byref(r),None,C.byref(mask)),0)
+        self.assertEqual(mask.value,1)
+        self.assertEqual(f(None,0,C.byref(r),None,C.byref(mask)),1)
+        self.assertEqual(mask.value,0)
+        self.assertEqual(bytes(r),bytes(C.sizeof(r)))
+
 if __name__=='__main__': unittest.main()

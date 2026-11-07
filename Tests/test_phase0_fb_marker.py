@@ -39,7 +39,13 @@ class Phase0FbMarkerTests(unittest.TestCase):
     def test_existing_mapping_and_assert_stop_preserved(self):
         for statement in (
             "BootArgs = (APPLE_BOOT_ARGS *)(UINTN)FixedPcdGet64 (PcdBootArgsPointer);",
-            "mFb.Base     = (volatile UINT32 *)(UINTN)BootArgs->VideoBase;",
+            "mFb.Height   = (UINTN)BootArgs->VideoHeight;",
+            "mFb.OriginY  = mFb.Height - mFb.Rows * (APPLE_FB_GLYPH_H * mFb.Scale);",
+            "mFb.Base     = (volatile UINT32 *)(UINTN)(BootArgs->VideoBase +",
+            "mFb.OriginY * BootArgs->VideoStride);",
+            "BootArgs->VideoStride > (UINTN)-1 / BootArgs->VideoHeight",
+            "BootArgs->VideoBase > (UINTN)-1 - BootArgs->VideoStride * BootArgs->VideoHeight",
+            "FbPrintHex ((UINTN)BootArgs->VideoBase);",
             "mFb.StridePx = (UINTN)(BootArgs->VideoStride / 4);",
             "mFb.Mirror   = FB_MIRROR_X;",
             "CpuDeadLoop ();",

@@ -51,7 +51,8 @@ typedef struct {
 #define APPLE_FB_DEFAULT_SCALE  2
 
 // Experimental diagnostic stripe, not a GUI overlay or GOP mode change.
-// All modules retain logging, but may overwrite only the top 304 pixels.
+// All modules retain logging, but may overwrite only complete character rows
+// within the bottom 304 pixels. The text area is aligned to the screen bottom.
 #ifndef APPLE_FB_DEBUG_STRIPE_HEIGHT
 #define APPLE_FB_DEBUG_STRIPE_HEIGHT  304
 #endif
@@ -64,9 +65,10 @@ typedef struct {
 #define FB_MIRROR_X  (FixedPcdGetBool (PcdAppleFbDebugMirrorX))
 
 STATIC struct {
-  volatile UINT32    *Base;
+  volatile UINT32    *Base;       // Text stripe origin, not the boot framebuffer base.
   UINTN              Width;
-  UINTN              Height;
+  UINTN              Height;     // Original framebuffer height for diagnostics.
+  UINTN              OriginY;    // Absolute screen row; pixel/flush coordinates are local.
   UINTN              StridePx;
   UINTN              Scale;
   UINTN              Cols;
@@ -278,13 +280,17 @@ FbProbe (
     return;
   }
 
-  mFb.Base     = (volatile UINT32 *)(UINTN)BootArgs->VideoBase;
   mFb.Width    = (UINTN)BootArgs->VideoWidth;
   mFb.Height   = (UINTN)BootArgs->VideoHeight;
   mFb.StridePx = (UINTN)(BootArgs->VideoStride / 4);
   mFb.Scale    = (mFb.Width >= 1280) ? APPLE_FB_DEFAULT_SCALE : 1;
   mFb.Cols     = mFb.Width / (APPLE_FB_GLYPH_W * mFb.Scale);
   mFb.Rows     = MIN (mFb.Height, APPLE_FB_DEBUG_STRIPE_HEIGHT) / (APPLE_FB_GLYPH_H * mFb.Scale);
+  mFb.OriginY  = mFb.Height - mFb.Rows * (APPLE_FB_GLYPH_H * mFb.Scale);
+  // Full framebuffer bounds were checked above, including this byte offset.
+  // Rebasing once also covers direct Base accesses in clear and FbScroll.
+  mFb.Base     = (volatile UINT32 *)(UINTN)(BootArgs->VideoBase +
+                                          mFb.OriginY * BootArgs->VideoStride);
   mFb.CurX     = 0;
   mFb.CurY     = 0;
   mFb.Mirror   = FB_MIRROR_X;
@@ -300,17 +306,21 @@ FbProbe (
 
   FbPuts ("#### APPLE FB DEBUG CONSOLE ####\n");
   // Each module has its own probe state; first use clears only the stripe.
-  // Logs can still obscure top-of-screen UI; this is not a composited overlay.
+  // Logs can still obscure bottom-of-screen UI; this is not a composited overlay.
   // Repeat the build marker after every banner; this is not SPI entry evidence.
   FbPuts ("J313-P0-20261104-r1\n");
   FbPuts ("FB BASE 0x");
-  FbPrintHex ((UINTN)mFb.Base);
+  FbPrintHex ((UINTN)BootArgs->VideoBase);
   FbPuts (" ");
   FbPrintDec (mFb.Width);
   FbPuts ("X");
   FbPrintDec (mFb.Height);
   FbPuts (" STRIDE ");
   FbPrintDec (mFb.StridePx);
+  FbPuts (" STRIPE Y ");
+  FbPrintDec (mFb.OriginY);
+  FbPuts (" H ");
+  FbPrintDec (CellH * mFb.Rows);
   FbPuts (" SCALE ");
   FbPrintDec (mFb.Scale);
   FbPuts (" MIRROR ");

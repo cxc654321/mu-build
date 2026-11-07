@@ -44,6 +44,23 @@ int J313BoardResourcesParseEx(const void *Blob, size_t Size,
  * Same output/diagnostic ABI and failure guarantees as ParseEx. */
 int J313BoardResourcesParseContainer(const void *Blob, size_t Size,
   J313_SPI_RESOURCES *Resources, J313_ADT_DIAGNOSTIC *Diagnostic);
+/* Identity mismatch bits, independent of the unchanged diagnostic ABI. */
+#define J313_IDENTITY_TARGET_TYPE (1u << 0)
+#define J313_IDENTITY_CHIP_ID     (1u << 1)
+#define J313_IDENTITY_ARM_IO      (1u << 2)
+#define J313_IDENTITY_SPI         (1u << 3)
+#define J313_IDENTITY_IPD         (1u << 4)
+/* J313 Load experiment ONLY; legacy Parse/ParseEx/ParseContainer stay strict.
+ * Same tail-ignore policy as ParseContainer. Collect all five missing/mismatched
+ * identity checks without rejecting them; never bypass structural, reg/ranges,
+ * clock-gates or PMGR checks or synthesize missing nodes/properties/ranges.
+ * On success TargetType/ChipId are assumed j313/t8103, NOT verified identity.
+ * Optional IdentityMask is reset on entry; zero before successful structural
+ * validation does NOT mean identity passed. Bits survive later resource failure.
+ * Output pointers must not overlap each other or Blob. Diagnostic ABI unchanged.
+ */
+int J313BoardResourcesParseExperimentalIdentityBypass(const void *Blob, size_t Size,
+  J313_SPI_RESOURCES *Resources, J313_ADT_DIAGNOSTIC *Diagnostic, uint32_t *IdentityMask);
 #ifndef J313_HOST_TEST
 #include <Uefi.h>
 EFI_STATUS J313BoardResourcesLoad(J313_SPI_RESOURCES *Resources);

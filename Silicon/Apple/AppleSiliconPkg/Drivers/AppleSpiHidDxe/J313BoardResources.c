@@ -319,22 +319,25 @@ static int gates(struct power_walk *w,const char *path) {
  }
  return 1;
 }
-static int ParseResources(const void *blob,size_t size,J313_SPI_RESOURCES *out, radt_workspace workspace, int ignore_tail) {
+static int ParseResources(const void *blob,size_t size,J313_SPI_RESOURCES *out, radt_workspace workspace,
+ int ignore_tail, int bypass_identity, uint32_t *identity_mask) {
  const unsigned char *b=blob; const radt_property *p; J313_SPI_RESOURCES r;
- struct power_walk walk; size_t n;
+ struct power_walk walk; size_t n; uint32_t mask=0;
  if(!out) return 1;
  memset(out,0,sizeof(*out)); memset(&r,0,sizeof(r));
  if(validate_root(blob,size,&workspace,ignore_tail)!=RADT_OK) return 1;
  p=get(b,&workspace,"/","target-type");
- if(!p || p->size!=5 || memcmp(b+p->data,"j313",5)) return 2;
+ if(!p || p->size!=5 || memcmp(b+p->data,"j313",5)) mask|=J313_IDENTITY_TARGET_TYPE;
  p=get(b,&workspace,"/chosen","chip-id");
- if(!p || p->size!=4 || le32(b+p->data)!=0x8103) return 2;
+ if(!p || p->size!=4 || le32(b+p->data)!=0x8103) mask|=J313_IDENTITY_CHIP_ID;
  n=exact_path(b,&workspace,"/arm-io");
- if(n==SIZE_MAX || !compatible(b,&workspace,n,"arm-io,t8103")) return 2;
+ if(n==SIZE_MAX || !compatible(b,&workspace,n,"arm-io,t8103")) mask|=J313_IDENTITY_ARM_IO;
  n=exact_path(b,&workspace,"/arm-io/spi3");
- if(n==SIZE_MAX || !compatible(b,&workspace,n,"spi-1,spimc")) return 2;
+ if(n==SIZE_MAX || !compatible(b,&workspace,n,"spi-1,spimc")) mask|=J313_IDENTITY_SPI;
  n=exact_path(b,&workspace,"/arm-io/spi3/ipd");
- if(n==SIZE_MAX || !compatible(b,&workspace,n,"hid-transport,spi")) return 2;
+ if(n==SIZE_MAX || !compatible(b,&workspace,n,"hid-transport,spi")) mask|=J313_IDENTITY_IPD;
+ if(identity_mask) *identity_mask=mask;
+ if(mask && !bypass_identity) return 2;
  if(!reg_at(b,&workspace,"/arm-io/spi3",0,&r.SpiBase,&r.SpiSize) ||
     !reg_at(b,&workspace,"/arm-io/gpio",0,&r.ApBase,&r.ApSize) ||
     !reg_at(b,&workspace,"/arm-io/nub-gpio",0,&r.NubBase,&r.NubSize) ||
@@ -350,12 +353,15 @@ static int ParseResources(const void *blob,size_t size,J313_SPI_RESOURCES *out, 
  if(!walk.dev || walk.dev->size<96 || walk.dev->size%48 || !walk.ps || !walk.ps->size || walk.ps->size%12) return 4;
  walk.u8=b[walk.dev->data+3]!=b[walk.dev->data+48+3];
  if(!gates(&walk,"/arm-io/gpio") || !gates(&walk,"/arm-io/nub-gpio") || !power(&walk,0x34) || !r.PowerCount) return 4;
+ /* In the experimental branch these constants are assumptions, NOT verified
+  * identity, even when mask is zero. Resource/address checks above still apply. */
  memcpy(r.TargetType,"j313",5); r.ChipId=0x8103; r.ClockGate=0x34;
  *out=r; return 0;
 }
 static int ParseWithPolicy(const void *blob,size_t size,J313_SPI_RESOURCES *out,
- J313_ADT_DIAGNOSTIC *diagnostic, int ignore_tail) {
+ J313_ADT_DIAGNOSTIC *diagnostic, int ignore_tail, int bypass_identity, uint32_t *identity_mask) {
  radt_workspace w; int result;
+ if(identity_mask) *identity_mask=0;
  memset(&w,0,sizeof(w)); w.diagnostic=diagnostic;
  if(diagnostic) { memset(diagnostic,0,sizeof(*diagnostic)); diagnostic->NodeIndex=SIZE_MAX; diagnostic->Size=size; }
  if(!out) { fail(&w,RADT_ARGUMENT,J313_ADT_ARGUMENT,0,SIZE_MAX,NULL,size,SIZE_MAX); return 1; }
@@ -370,17 +376,21 @@ static int ParseWithPolicy(const void *blob,size_t size,J313_SPI_RESOURCES *out,
  w.nodes=BoardAllocate(w.node_capacity*sizeof(*w.nodes));
  w.props=BoardAllocate(w.prop_capacity*sizeof(*w.props));
  if(!w.nodes || !w.props) { fail(&w,RADT_BUDGET,J313_ADT_ALLOCATION,0,SIZE_MAX,NULL,size,SIZE_MAX); if(w.nodes) BoardFree(w.nodes); if(w.props) BoardFree(w.props); return 5; }
- result=ParseResources(blob,size,out,w,ignore_tail);
+ result=ParseResources(blob,size,out,w,ignore_tail,bypass_identity,identity_mask);
  BoardFree(w.props); BoardFree(w.nodes);
  return result;
 }
 int J313BoardResourcesParseEx(const void *blob,size_t size,J313_SPI_RESOURCES *out,
  J313_ADT_DIAGNOSTIC *diagnostic) {
- return ParseWithPolicy(blob,size,out,diagnostic,0);
+ return ParseWithPolicy(blob,size,out,diagnostic,0,0,NULL);
 }
 int J313BoardResourcesParseContainer(const void *blob,size_t size,J313_SPI_RESOURCES *out,
  J313_ADT_DIAGNOSTIC *diagnostic) {
- return ParseWithPolicy(blob,size,out,diagnostic,1);
+ return ParseWithPolicy(blob,size,out,diagnostic,1,0,NULL);
+}
+int J313BoardResourcesParseExperimentalIdentityBypass(const void *blob,size_t size,
+ J313_SPI_RESOURCES *out,J313_ADT_DIAGNOSTIC *diagnostic,uint32_t *identity_mask) {
+ return ParseWithPolicy(blob,size,out,diagnostic,1,1,identity_mask);
 }
 int J313BoardResourcesParse(const void *blob,size_t size,J313_SPI_RESOURCES *out) {
  return J313BoardResourcesParseEx(blob,size,out,NULL);
@@ -388,7 +398,7 @@ int J313BoardResourcesParse(const void *blob,size_t size,J313_SPI_RESOURCES *out
 #ifndef J313_HOST_TEST
 EFI_STATUS J313BoardResourcesLoad(J313_SPI_RESOURCES *Resources) {
  VOID *Hob; APPLE_ADT_INFO_HOB *Info; VOID *Copy; int Result;
- J313_ADT_DIAGNOSTIC Diagnostic;
+ J313_ADT_DIAGNOSTIC Diagnostic; uint32_t IdentityMask;
  if(Resources==NULL) return EFI_INVALID_PARAMETER;
  ZeroMem(Resources,sizeof(*Resources));
  Hob=GetFirstGuidHob(&gAppleSiliconPkgAdtInfoHobGuid);
@@ -400,8 +410,10 @@ EFI_STATUS J313BoardResourcesLoad(J313_SPI_RESOURCES *Resources) {
     Info->AdtBase-Info->AdtPagesBase>Info->AdtPagesSize-Info->AdtSize) return EFI_COMPROMISED_DATA;
  Copy=AllocateCopyPool((UINTN)Info->AdtSize,(VOID *)(UINTN)Info->AdtBase);
  if(Copy==NULL) return EFI_OUT_OF_RESOURCES;
- /* EXPERIMENTAL: retain the full reserved HOB span, ignore only root tail. */
- Result=J313BoardResourcesParseContainer(Copy,(UINTN)Info->AdtSize,Resources,&Diagnostic);
+ /* J313-only EXPERIMENTAL: assume identity, retain all resource checks and
+  * the full reserved HOB span; ignore only the counted root tail. */
+ Result=J313BoardResourcesParseExperimentalIdentityBypass(Copy,(UINTN)Info->AdtSize,Resources,&Diagnostic,&IdentityMask);
+ DEBUG((DEBUG_ERROR,"J313 ADT EXPERIMENTAL IDENTITY-BYPASS mask=0x%x (assumed j313/t8103; not verified)\n",IdentityMask));
  FreePool(Copy);
  if(Diagnostic.TreeComplete) DEBUG((DEBUG_ERROR,"J313 ADT EXPERIMENTAL TAIL-IGNORED size=%Lu consumed=%Lu tail=%Lu zero=%u\n",
   (UINT64)Diagnostic.Size,(UINT64)Diagnostic.Consumed,(UINT64)Diagnostic.TailSize,Diagnostic.TailAllZero));
