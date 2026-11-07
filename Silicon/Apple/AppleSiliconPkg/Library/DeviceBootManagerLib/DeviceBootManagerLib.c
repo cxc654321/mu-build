@@ -47,6 +47,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 #include <Library/PrintLib.h>
 #include <Library/PowerServicesLib.h>
 #include <Library/ThermalServicesLib.h>
+#include <Library/TimerLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
@@ -58,8 +59,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 #include <Settings/BootMenuSettings.h>
 #include <Settings/DfciSettings.h>
 
-// SWM boot gate: 100 ms timer ticks, at most two seconds of timer waiting.
-// A platform build may shorten the budget, but must not extend it past 2 s.
+// SWM boot gate: elapsed architectural counter budget, never WaitForEvent.
 #define SWM_BOOT_GATE_PERIOD_100NS  1000000ULL
 #ifndef SWM_BOOT_GATE_MAX_TICKS
 #define SWM_BOOT_GATE_MAX_TICKS     20
@@ -67,16 +67,19 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 #if (SWM_BOOT_GATE_MAX_TICKS < 1) || (SWM_BOOT_GATE_MAX_TICKS > 20)
 #error SWM_BOOT_GATE_MAX_TICKS must be between 1 and 20
 #endif
+// A second, finite bound if the architectural counter stops. This may expire
+// sooner than the time budget; it is deliberately fail-closed, not a delay.
+#define SWM_BOOT_GATE_MAX_POLLS  200000U
 
 /**
-  Wait only on UI entry paths, without starving SWM's TPL_CALLBACK probe.
-
-  SWM is published during Stage2, before Stage2 returns. At TPL_APPLICATION
-  that callback has completed for the J313 synchronous GOP/SRE handoff. This
-  gates protocol availability, not a private readiness contract: Stage2 must
-  succeed or withdraw SWM on failure. Failed withdrawal can leave stale SWM.
-  Never wait at callback TPL or above.
-  The budget bounds timer waits, not time spent executing firmware callbacks.
+  Gate UI entry at TPL_APPLICATION so SWM callbacks can complete normally.
+  J313 TimerLib is ArmArchTimerLib: its ascending performance counter is read
+  directly, independently of DXE timer interrupt delivery. Unsigned subtraction
+  also handles counter wrap. Never Stall or wait for a timer event here.
+  Bounds apply only while called services/callbacks return: arbitrary hung
+  callbacks, counter reads, debug output or boot services cannot be preempted.
+  Protocol publication is not a private readiness contract: Stage2 must finish
+  or withdraw SWM on failure before returning to application TPL.
 **/
 STATIC
 EFI_STATUS
@@ -87,36 +90,52 @@ WaitForSwmReady (
   EFI_STATUS                         Status;
   EFI_STATUS                         CloseStatus;
   EFI_EVENT                          TimerEvent;
-  UINTN                              Index;
-  UINTN                              Tick;
+  UINTN                              Poll;
+  UINT64                             Start;
   MS_SIMPLE_WINDOW_MANAGER_PROTOCOL  *Swm;
 
-  // UefiLib samples with RaiseTPL (TPL_HIGH_LEVEL), then immediately restores.
+  DEBUG ((DEBUG_ERROR, "[SWM-GATE] enter: sample TPL\n"));
   if (EfiGetCurrentTpl () != TPL_APPLICATION) {
+    DEBUG ((DEBUG_ERROR, "[SWM-GATE] exit: unsupported TPL\n"));
     return EFI_UNSUPPORTED;
   }
 
+  DEBUG ((DEBUG_ERROR, "[SWM-GATE] initial LocateProtocol enter\n"));
   Status = gBS->LocateProtocol (&gMsSWMProtocolGuid, NULL, (VOID **)&Swm);
+  DEBUG ((DEBUG_ERROR, "[SWM-GATE] initial LocateProtocol exit: %r\n", Status));
   if (Status != EFI_NOT_FOUND) {
     return Status;
   }
 
   TimerEvent = NULL;
+  DEBUG ((DEBUG_ERROR, "[SWM-GATE] CreateEvent enter\n"));
   Status = gBS->CreateEvent (EVT_TIMER, TPL_APPLICATION, NULL, NULL, &TimerEvent);
+  DEBUG ((DEBUG_ERROR, "[SWM-GATE] CreateEvent exit: %r\n", Status));
   if (EFI_ERROR (Status)) {
     return Status;
   }
 
+  DEBUG ((DEBUG_ERROR, "[SWM-GATE] SetTimer enter\n"));
   Status = gBS->SetTimer (TimerEvent, TimerPeriodic, SWM_BOOT_GATE_PERIOD_100NS);
+  DEBUG ((DEBUG_ERROR, "[SWM-GATE] SetTimer exit: %r\n", Status));
   if (!EFI_ERROR (Status)) {
-    for (Tick = 0; Tick < SWM_BOOT_GATE_MAX_TICKS; Tick++) {
-      Status = gBS->WaitForEvent (1, &TimerEvent, &Index);
-      if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "[SWM-GATE] bounded poll enter (counter/CheckEvent/LocateProtocol)\n"));
+    Start = GetPerformanceCounter ();
+    for (Poll = 0; Poll < SWM_BOOT_GATE_MAX_POLLS; Poll++) {
+      Status = gBS->CheckEvent (TimerEvent);
+      if ((Status != EFI_SUCCESS) && (Status != EFI_NOT_READY)) {
         break;
       }
 
+      // Check even without a signaled timer: readiness need not depend on IRQs.
       Status = gBS->LocateProtocol (&gMsSWMProtocolGuid, NULL, (VOID **)&Swm);
       if (Status != EFI_NOT_FOUND) {
+        break;
+      }
+
+      if (GetTimeInNanoSecond (GetPerformanceCounter () - Start) >=
+          SWM_BOOT_GATE_MAX_TICKS * SWM_BOOT_GATE_PERIOD_100NS * 100ULL)
+      {
         break;
       }
     }
@@ -124,13 +143,15 @@ WaitForSwmReady (
     if (Status == EFI_NOT_FOUND) {
       Status = EFI_TIMEOUT;
     }
+
+    DEBUG ((DEBUG_ERROR, "[SWM-GATE] bounded poll exit: %r, polls=%u\n", Status, (UINT32)Poll));
   }
 
-  // Closing also cancels the periodic timer; every successfully created event
-  // takes this path, including SetTimer/WaitForEvent/LocateProtocol failures.
+  // Close cancels the timer, including all polling and SetTimer error paths.
+  DEBUG ((DEBUG_ERROR, "[SWM-GATE] CloseEvent enter: gate=%r\n", Status));
   CloseStatus = gBS->CloseEvent (TimerEvent);
+  DEBUG ((DEBUG_ERROR, "[SWM-GATE] CloseEvent exit: %r; gate exit: %r\n", CloseStatus, Status));
   if (EFI_ERROR (CloseStatus)) {
-    DEBUG ((DEBUG_ERROR, "%a: timer close failed (%r), gate status %r\n", __FUNCTION__, CloseStatus, Status));
     return CloseStatus;
   }
 
@@ -1306,7 +1327,7 @@ DeviceBootManagerPriorityBoot (
 #define J313_PHOTO_PAUSE_ENABLED  1
 #endif
 
-/** Bounded photo pause only at application TPL; never read keys or retry. */
+/** Requested photo pause at application TPL; Stall/callback hangs are not bounded. */
 STATIC
 VOID
 J313PhotoPause (

@@ -23,6 +23,9 @@ MOCK = r'''
 #define EFI_UNSUPPORTED 3
 #define EFI_DEVICE_ERROR 7
 #define EFI_NOT_FOUND 14
+#define EFI_NOT_READY 6
+typedef uint64_t UINT64;
+typedef uint32_t UINT32;
 #define EFI_TIMEOUT 18
 #define EFI_ERROR(s) ((s) != EFI_SUCCESS)
 #define DEBUG(x) do {} while (0)
@@ -46,7 +49,10 @@ static int gMsSWMProtocolGuid, token, event_token;
 static unsigned tpl = TPL_APPLICATION;
 static int creates, sets, waits, closes, locates, live, raises, restores;
 static int ready_at = -1, create_error, set_error, wait_error, close_error;
-static int published, stage2_complete;
+static int published, stage2_complete, frozen, missing_irq, hung_callback;
+static uint64_t counter;
+static uint64_t GetPerformanceCounter(void) { return counter; }
+static uint64_t GetTimeInNanoSecond(uint64_t ticks) { return ticks; }
 static int locate_error_at = -1;
 static EFI_TPL raise_tpl(EFI_TPL to) {
   EFI_TPL old = tpl; assert(to == TPL_HIGH_LEVEL); assert(to >= old);
@@ -78,17 +84,19 @@ static EFI_STATUS set(EFI_EVENT event, int type, uint64_t interval) {
   assert(type == TimerPeriodic && interval == 1000000ULL); sets++;
   return set_error ? EFI_DEVICE_ERROR : EFI_SUCCESS;
 }
-static EFI_STATUS wait_event(UINTN count, EFI_EVENT *events, UINTN *index) {
-  assert(tpl == TPL_APPLICATION && count == 1 && live);
-  assert(events[0] == &event_token); waits++;
-  // Real WaitForEvent allows TPL_CALLBACK probes to run to completion.
+static EFI_STATUS check_event(EFI_EVENT event) {
+  assert(tpl == TPL_APPLICATION && live);
+  assert(event == &event_token); waits++;
+  if (!frozen) counter += 100000000ULL;
+  // CheckEvent returns with application TPL, permitting queued callbacks.
   tpl = TPL_CALLBACK;
+  if (hung_callback) for (;;) {}  // Outside the synchronous gate budget.
   if (!wait_error && ready_at >= 0 && waits >= ready_at) {
     published = 1;  // SWM installation precedes Stage2 completion.
     stage2_complete = 1;
   }
   tpl = TPL_APPLICATION;
-  *index = 0; return wait_error ? EFI_DEVICE_ERROR : EFI_SUCCESS;
+  return wait_error ? EFI_DEVICE_ERROR : missing_irq ? EFI_NOT_READY : EFI_SUCCESS;
 }
 static EFI_STATUS close_event(EFI_EVENT event) {
   assert(tpl == TPL_APPLICATION && live && event == &event_token); closes++;
@@ -100,9 +108,9 @@ static struct {
   EFI_STATUS (*LocateProtocol)(void *, void *, void **);
   EFI_STATUS (*CreateEvent)(unsigned, EFI_TPL, void (*)(EFI_EVENT,void *), void *, EFI_EVENT *);
   EFI_STATUS (*SetTimer)(EFI_EVENT, int, uint64_t);
-  EFI_STATUS (*WaitForEvent)(UINTN, EFI_EVENT *, UINTN *);
+  EFI_STATUS (*CheckEvent)(EFI_EVENT);
   EFI_STATUS (*CloseEvent)(EFI_EVENT);
-} services = {locate, create, set, wait_event, close_event}, *gBS = &services;
+} services = {locate, create, set, check_event, close_event}, *gBS = &services;
 '''
 
 MAIN = r'''
@@ -128,6 +136,15 @@ int main(int argc, char **argv) {
     case 14: set_error = close_error = 1; expected = EFI_DEVICE_ERROR; break;
     case 15: close_error = 1; expected = EFI_DEVICE_ERROR;
              expected_waits = SWM_BOOT_GATE_MAX_TICKS; break;
+    case 16: missing_irq = 1; expected = EFI_TIMEOUT;
+             expected_waits = SWM_BOOT_GATE_MAX_TICKS; break;
+    case 17: missing_irq = frozen = 1; expected = EFI_TIMEOUT;
+             expected_waits = SWM_BOOT_GATE_MAX_POLLS; break;
+    case 18: missing_irq = 1; ready_at = 3; expected_waits = 3; break;
+    case 19: counter = UINT64_MAX - 150000000ULL; expected = EFI_TIMEOUT;
+             expected_waits = SWM_BOOT_GATE_MAX_TICKS; break;
+    case 20: frozen = 1; ready_at = 3; expected_waits = 3; break;
+    case 21: hung_callback = 1; break;
     default: abort();
   }
   unsigned old_tpl = tpl;
@@ -162,9 +179,13 @@ class SwmBootGateTests(unittest.TestCase):
                 subprocess.run(cc + ["-std=c11", "-Wall", "-Wextra", "-Werror",
                                      f"-DSWM_BOOT_GATE_MAX_TICKS={ticks}",
                                      str(src), "-o", str(binary)], check=True, text=True)
-                for scenario in range(16):
+                for scenario in range(21):
                     with self.subTest(ticks=ticks, scenario=scenario):
                         subprocess.run([str(binary), str(scenario)], check=True, timeout=5)
+            # A callback that never returns cannot be bounded by synchronous C.
+            # The host watchdog demonstrates this limitation, not a firmware guarantee.
+            with self.assertRaises(subprocess.TimeoutExpired):
+                subprocess.run([str(binary), "21"], check=True, timeout=0.25)
             for invalid in (0, 21):
                 result = subprocess.run(cc + ["-std=c11", f"-DSWM_BOOT_GATE_MAX_TICKS={invalid}",
                                              "-fsyntax-only", str(src)], capture_output=True, text=True)
@@ -191,6 +212,9 @@ class SwmBootGateTests(unittest.TestCase):
         inf = (LIB / "DeviceBootManagerLib.inf").read_text()
         self.assertIn("#include <Protocol/SimpleWindowManager.h>", SOURCE)
         self.assertRegex(inf, r"(?m)^  UefiLib$")
+        self.assertRegex(inf, r"(?m)^  TimerLib$")
+        self.assertNotIn("gBS->WaitForEvent", GATE)
+        self.assertIn("gBS->CheckEvent", GATE)
         self.assertRegex(inf, r"gMsSWMProtocolGuid\s+## CONSUMES")
         for forbidden in ("Stall (", "ConnectAll", "SetVariable", "ResetSystem", "RebootToFrontPage"):
             self.assertNotIn(forbidden, GATE)

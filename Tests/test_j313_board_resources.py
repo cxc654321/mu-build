@@ -61,4 +61,92 @@ class TestBoard(unittest.TestCase):
         self.check(b[:at]+template+b[at:],True)
     def test_cycle_identity_and_trailing(self):
         self.check(fixture(True),False);self.check(fixture(target=b'j314\0'),False);self.check(fixture()+b'\0',False)
+class Diagnostic(C.Structure):
+    _fields_=[('reason',C.c_uint32),('offset',C.c_size_t),('node',C.c_size_t),('key',C.c_char*33)]
+
+class TestDiagnostic(TestBoard):
+    def detail(self,b):
+        data=C.create_string_buffer(b);r=Resources();d=Diagnostic()
+        C.memset(C.byref(r),0xa5,C.sizeof(r));C.memset(C.byref(d),0xa5,C.sizeof(d))
+        f=self.lib.J313BoardResourcesParseEx
+        f.argtypes=[C.c_void_p,C.c_size_t,C.POINTER(Resources),C.POINTER(Diagnostic)]
+        status=f(data,len(b),C.byref(r),C.byref(d))
+        if status:self.assertEqual(bytes(r),bytes(C.sizeof(r)))
+        self.assertLessEqual(d.offset,len(b))
+        return status,d
+    def test_real_failure_locations(self):
+        b=fixture();bad=b[:40]+u32(0x7fffffff)+b[44:]
+        status,d=self.detail(bad)
+        self.assertEqual((status,d.reason,d.offset,d.node,d.key),(1,11,44,0,b'name'))
+        at=b.index(prop('name',b'spi3\0'))
+        bad=b[:at+36]+b'spi/\0'+b[at+41:]
+        status,d=self.detail(bad)
+        self.assertEqual((status,d.reason,d.offset,d.node,d.key),(1,14,at+36,3,b'name'))
+        for tail in [b'\0',b'\0'*4096,b'private-secret']:
+            status,d=self.detail(b+tail)
+            self.assertEqual((status,d.reason,d.offset,d.key),(1,17,len(b),b''))
+    def test_structural_reason_branches(self):
+        cases=[
+            (b'\xd0\x0d\xfe\xed'+b'\0'*4,3,0),
+            (u32(0xffffffff)+u32(0),7,0),
+            (u32(1)+u32(0)+b'x',8,8),
+            (node('x')[:-1],12,46),
+            (u32(0)+u32(0),15,8),
+            (node('x',[('name',b'y\0')]),10,48),
+            (node('root',children=[node('x'),node('x')]),16,144),
+        ]
+        b=node('x');cases.append((b[:40]+u32(0x80000002)+b[44:],13,40))
+        deep=node('x')
+        for _ in range(64):deep=node('x',children=[deep])
+        cases.append((deep,4,64*48))
+        for b,reason,offset in cases:
+            with self.subTest(reason=reason):
+                status,d=self.detail(b)
+                self.assertEqual((status,d.reason,d.offset),(1,reason,offset))
+    def test_name_padding_not_speculatively_relaxed(self):
+        b=fixture().replace(prop('name',b'spi3\0'),prop('name',b'spi3\0\0'))
+        status,d=self.detail(b);self.assertEqual((status,d.reason,d.key),(1,14,b'name'))
+    def test_opaque_unrelated_compatible_and_identity_gate(self):
+        for value in [b'',b'\0',b'x\0\0',b'opaque\xff']:
+            b=fixture();b=b[:4]+u32(3)+b[8:]+node('unrelated',[('compatible',value)])
+            self.check(b,True)
+        for value in [b'',b'\0',b'arm-io,t8103',b'arm-io,t8103\0bad']:
+            b=fixture().replace(prop('compatible',b'arm-io,t8103\0'),prop('compatible',value))
+            status,d=self.detail(b);self.assertEqual(status,2)
+    def test_bounded_sanitized_key(self):
+        b=fixture();status,d=self.detail(b[:8]+b'X'*32+b[40:])
+        self.assertEqual((status,d.reason,d.key),(1,9,b'X'*32))
+        self.assertEqual(bytes(d)[Diagnostic.key.offset+32],0)
+        status,d=self.detail(b[:8]+b'na\x01e'+b[12:])
+        self.assertEqual((status,d.reason,d.offset,d.key),(1,9,10,b'na?e'))
+    def test_diagnostic_reset_and_all_prefixes(self):
+        b=fixture();status,d=self.detail(b)
+        self.assertEqual((status,d.reason,d.offset,d.key),(0,0,len(b),b''))
+        for n in range(len(b)):
+            status,d=self.detail(b[:n]);self.assertEqual(status,1);self.assertNotEqual(d.reason,0)
+    def test_guard_page_all_prefixes(self):
+        # A subprocess protects the test runner; every prefix ends at PROT_NONE.
+        # Unlike create_string_buffer this detects even a one-byte overread.
+        import sys
+        script = r'''
+import ctypes as C, mmap, sys
+sys.path.insert(0,sys.argv[1])
+from test_j313_board_resources import fixture, Resources, Diagnostic
+lib=C.CDLL(sys.argv[2]);f=lib.J313BoardResourcesParseEx
+f.argtypes=[C.c_void_p,C.c_size_t,C.POINTER(Resources),C.POINTER(Diagnostic)]
+page=mmap.PAGESIZE;m=mmap.mmap(-1,page*2,prot=mmap.PROT_READ|mmap.PROT_WRITE)
+addr=C.addressof(C.c_char.from_buffer(m));syslib=C.CDLL(None)
+syslib.mprotect.argtypes=[C.c_void_p,C.c_size_t,C.c_int]
+assert syslib.mprotect(addr+page,page,0)==0
+b=fixture();assert len(b)<page
+cases=[b[:n] for n in range(len(b)+1)]
+cases += [b[:8]+b'X'*32+b[40:],b[:40]+(0x7fffffff).to_bytes(4,'little')+b[44:]]
+for data in cases:
+    p=addr+page-len(data);C.memmove(p,data,len(data));r=Resources();d=Diagnostic()
+    result=f(p,len(data),C.byref(r),C.byref(d))
+    assert result==0 if data==b else result!=0
+assert syslib.mprotect(addr+page,page,mmap.PROT_READ|mmap.PROT_WRITE)==0
+'''
+        subprocess.run([sys.executable,'-c',script,str(ROOT/'Tests'),str(pathlib.Path(self.tmp.name)/'board.so')],check=True)
+
 if __name__=='__main__': unittest.main()

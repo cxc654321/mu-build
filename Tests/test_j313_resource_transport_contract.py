@@ -13,7 +13,10 @@ import pathlib
 import subprocess
 import tempfile
 import unittest
-from test_j313_board_resources import D, Resources, fixture, node, reg, u32
+if __package__:
+    from .test_j313_board_resources import D, Resources, fixture, node, reg, u32
+else:
+    from test_j313_board_resources import D, Resources, fixture, node, reg, u32
 import struct
 
 

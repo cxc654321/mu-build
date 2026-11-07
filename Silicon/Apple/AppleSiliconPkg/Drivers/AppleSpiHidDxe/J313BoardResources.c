@@ -41,6 +41,7 @@ typedef struct { const unsigned char *data; size_t size; } radt_view;
 typedef struct { size_t parent, first, count, name; } radt_node;
 typedef struct { size_t key, data, size; uint32_t flags; } radt_property;
 typedef struct {
+    J313_ADT_DIAGNOSTIC *diagnostic;
     radt_node *nodes;
     radt_property *props;
     size_t node_count, prop_count, node_capacity, prop_capacity;
@@ -87,27 +88,45 @@ static int strings(const unsigned char *p, size_t n)
     }
     return 1;
 }
+/* Only called with a checked span. Never scan a key outside the input. */
+static radt_status fail(radt_workspace *w, radt_status status, uint32_t reason,
+    size_t off, size_t node, const unsigned char *b, size_t size, size_t key)
+{
+    size_t i;
+    J313_ADT_DIAGNOSTIC *d = w ? w->diagnostic : NULL;
+    if (!d) return status;
+    memset(d, 0, sizeof(*d));
+    d->Reason = reason; d->Offset = off; d->NodeIndex = node;
+    if (b && key < size) {
+        for (i = 0; i < 32 && i < size - key && b[key+i]; ++i)
+            d->Property[i] = b[key+i] >= 33 && b[key+i] <= 126 ? (char)b[key+i] : '?';
+    }
+    return status;
+}
 radt_status radt_validate(const void *buffer, size_t size, radt_workspace *w)
 {
     const unsigned char *b = buffer;
     struct { size_t index; uint32_t left; } stack[RADT_DEPTH];
     size_t depth = 0, off = 0;
+#define BAD(status, reason, at, node, key) fail(w, status, reason, at, node, b, size, key)
     if (!w) return RADT_ARGUMENT;
     w->node_count = w->prop_count = 0;
-    if (!b) return RADT_ARGUMENT;
-    if (size > RADT_BYTES) return RADT_BUDGET;
+    if (!b) return BAD(RADT_ARGUMENT, J313_ADT_ARGUMENT, 0, SIZE_MAX, SIZE_MAX);
+    if (size > RADT_BYTES) return BAD(RADT_BUDGET, J313_ADT_SIZE_BUDGET, 0, SIZE_MAX, SIZE_MAX);
     if (size >= 4 && b[0] == 0xd0 && b[1] == 0x0d &&
-        b[2] == 0xfe && b[3] == 0xed) return RADT_UNSUPPORTED;
+        b[2] == 0xfe && b[3] == 0xed) return BAD(RADT_UNSUPPORTED, J313_ADT_FDT, 0, SIZE_MAX, SIZE_MAX);
     do {
         uint32_t np, nc;
         size_t idx, parent, i, j;
         radt_node *node;
-        if (depth == RADT_DEPTH || w->node_count == w->node_capacity)
-            return RADT_BUDGET;
-        if (size - off < 8) return RADT_TRUNCATED;
+        if (depth == RADT_DEPTH)
+            return BAD(RADT_BUDGET, J313_ADT_DEPTH_BUDGET, off, w->node_count, SIZE_MAX);
+        if (w->node_count == w->node_capacity)
+            return BAD(RADT_BUDGET, J313_ADT_NODE_BUDGET, off, w->node_count, SIZE_MAX);
+        if (size - off < 8) return BAD(RADT_TRUNCATED, J313_ADT_NODE_HEADER, off, w->node_count, SIZE_MAX);
         np = le32(b + off); nc = le32(b + off + 4); off += 8;
         if (np > w->prop_capacity - w->prop_count ||
-            nc > w->node_capacity - w->node_count - 1) return RADT_BUDGET;
+            nc > w->node_capacity - w->node_count - 1) return BAD(RADT_BUDGET, J313_ADT_COUNT_BUDGET, off-8, w->node_count, SIZE_MAX);
         idx = w->node_count++;
         parent = depth ? stack[depth - 1].index : SIZE_MAX;
         node = &w->nodes[idx];
@@ -116,46 +135,51 @@ radt_status radt_validate(const void *buffer, size_t size, radt_workspace *w)
             size_t k, len, pad, keyoff = off;
             uint32_t flags;
             radt_property *p;
-            if (size - off < 36) return RADT_TRUNCATED;
+            if (size - off < 36) return BAD(RADT_TRUNCATED, J313_ADT_PROPERTY_HEADER, off, idx, SIZE_MAX);
             for (k = 0; k < 32 && b[off + k]; ++k)
                 if (b[off + k] < 33 || b[off + k] > 126)
-                    return RADT_FORMAT;
-            if (!k || k == 32) return RADT_FORMAT;
+                    return BAD(RADT_FORMAT, J313_ADT_PROPERTY_KEY, off+k, idx, keyoff);
+            if (!k || k == 32) return BAD(RADT_FORMAT, J313_ADT_PROPERTY_KEY, off, idx, keyoff);
             /* Trailing key bytes are not semantically significant. */
             for (j = node->first; j < w->prop_count; ++j)
                 if (eq(b, w->props[j].key, (const char *)b + off))
-                    return RADT_DUPLICATE;
+                    return BAD(RADT_DUPLICATE, J313_ADT_DUPLICATE_PROPERTY, off, idx, keyoff);
             len = le32(b + off + 32);
             /* m1n1 ADTPropertyStruct: bit31 is template, lower31 length.
              * Unrelated template values remain opaque, never interpreted. */
             flags = (uint32_t)len & UINT32_C(0x80000000);
             len &= UINT32_C(0x7fffffff);
             off += 36;
-            if (len > size - off) return RADT_TRUNCATED;
+            if (len > size - off) return BAD(RADT_TRUNCATED, J313_ADT_VALUE_LENGTH, off, idx, keyoff);
             pad = (4 - (len & 3)) & 3;
-            if (pad > size - off - len) return RADT_TRUNCATED;
+            if (pad > size - off - len) return BAD(RADT_TRUNCATED, J313_ADT_VALUE_PADDING, off+len, idx, keyoff);
             p = &w->props[w->prop_count++];
             *p = (radt_property){keyoff, off, len, flags};
             if (eq(b, keyoff, "name")) {
-                if (flags) return RADT_UNSUPPORTED;
+                if (flags) return BAD(RADT_UNSUPPORTED, J313_ADT_NAME_TEMPLATE, keyoff+32, idx, keyoff);
                 if (!(idx == 0 && len == 2 && b[off] == '/' && b[off+1] == 0) &&
-                    !node_name(b + off, len)) return RADT_FORMAT;
+                    !node_name(b + off, len)) return BAD(RADT_FORMAT, J313_ADT_NAME_VALUE, off, idx, keyoff);
                 node->name = off;
             }
-            if (eq(b, keyoff, "compatible") && !flags && !strings(b + off, len))
-                return RADT_FORMAT;
+            /* Values are opaque until consumed. m1n1 ADTStringList permits
+             * empty strings/lists; do not enforce our identity policy globally. */
             off += len + pad;
         }
-        if (node->name == SIZE_MAX) return RADT_FORMAT;
+        if (node->name == SIZE_MAX) return BAD(RADT_FORMAT, J313_ADT_NAME_MISSING, off, idx, SIZE_MAX);
         for (j = 1; j < idx; ++j)
             if (w->nodes[j].parent == parent &&
                 eq(b, w->nodes[j].name, (const char *)b + node->name))
-                return RADT_DUPLICATE;
+                return BAD(RADT_DUPLICATE, J313_ADT_DUPLICATE_NODE, node->name, idx, SIZE_MAX);
         if (depth) --stack[depth - 1].left;
         stack[depth].index = idx; stack[depth].left = nc; ++depth;
         while (depth && !stack[depth - 1].left) --depth;
     } while (depth);
-    return off == size ? RADT_OK : RADT_FORMAT;
+    /* Upstream readers return consumed length, but no verified bootargs tail
+     * padding contract is available. Keep strict rejection and diagnose it. */
+    if (off != size) return BAD(RADT_FORMAT, J313_ADT_TRAILING_BYTES, off, SIZE_MAX, SIZE_MAX);
+    if (w->diagnostic) w->diagnostic->Offset = off;
+#undef BAD
+    return RADT_OK;
 }
 static const radt_property *prop(const unsigned char *b,
     const radt_workspace *w, size_t node, const char *key)
@@ -192,7 +216,7 @@ static int compatible(const unsigned char *b, const radt_workspace *w,
 {
     const radt_property *p = prop(b, w, node, "compatible");
     size_t i = 0;
-    if (!p) return 0;
+    if (!p || !strings(b + p->data, p->size)) return 0;
     while (i < p->size) {
         if (eq(b, p->data + i, wanted)) return 1;
         i += strlen((const char *)b + p->data + i) + 1;
@@ -307,25 +331,34 @@ static int ParseResources(const void *blob,size_t size,J313_SPI_RESOURCES *out, 
  memcpy(r.TargetType,"j313",5); r.ChipId=0x8103; r.ClockGate=0x34;
  *out=r; return 0;
 }
-int J313BoardResourcesParse(const void *blob,size_t size,J313_SPI_RESOURCES *out) {
+int J313BoardResourcesParseEx(const void *blob,size_t size,J313_SPI_RESOURCES *out,
+ J313_ADT_DIAGNOSTIC *diagnostic) {
  radt_workspace w; int result;
- if(!out) return 1;
+ memset(&w,0,sizeof(w)); w.diagnostic=diagnostic;
+ if(diagnostic) { memset(diagnostic,0,sizeof(*diagnostic)); diagnostic->NodeIndex=SIZE_MAX; }
+ if(!out) { fail(&w,RADT_ARGUMENT,J313_ADT_ARGUMENT,0,SIZE_MAX,NULL,0,SIZE_MAX); return 1; }
  memset(out,0,sizeof(*out));
- if(!blob || size<8 || size>RADT_BYTES) return 1;
- memset(&w,0,sizeof(w));
+ if(!blob || size<8 || size>RADT_BYTES) {
+  fail(&w,RADT_ARGUMENT,!blob?J313_ADT_ARGUMENT:(size<8?J313_ADT_NODE_HEADER:J313_ADT_SIZE_BUDGET),
+       0,size<8 && blob?0:SIZE_MAX,NULL,0,SIZE_MAX); return 1;
+ }
  /* Every named node needs >=48 bytes; every property >=36. Derive memory
   * budgets from the actual HOB length, not host-fixture population limits. */
  w.node_capacity=size/48+1; w.prop_capacity=size/36+1;
  w.nodes=BoardAllocate(w.node_capacity*sizeof(*w.nodes));
  w.props=BoardAllocate(w.prop_capacity*sizeof(*w.props));
- if(!w.nodes || !w.props) { if(w.nodes) BoardFree(w.nodes); if(w.props) BoardFree(w.props); return 5; }
+ if(!w.nodes || !w.props) { fail(&w,RADT_BUDGET,J313_ADT_ALLOCATION,0,SIZE_MAX,NULL,0,SIZE_MAX); if(w.nodes) BoardFree(w.nodes); if(w.props) BoardFree(w.props); return 5; }
  result=ParseResources(blob,size,out,w);
  BoardFree(w.props); BoardFree(w.nodes);
  return result;
 }
+int J313BoardResourcesParse(const void *blob,size_t size,J313_SPI_RESOURCES *out) {
+ return J313BoardResourcesParseEx(blob,size,out,NULL);
+}
 #ifndef J313_HOST_TEST
 EFI_STATUS J313BoardResourcesLoad(J313_SPI_RESOURCES *Resources) {
  VOID *Hob; APPLE_ADT_INFO_HOB *Info; VOID *Copy; int Result;
+ J313_ADT_DIAGNOSTIC Diagnostic;
  if(Resources==NULL) return EFI_INVALID_PARAMETER;
  ZeroMem(Resources,sizeof(*Resources));
  Hob=GetFirstGuidHob(&gAppleSiliconPkgAdtInfoHobGuid);
@@ -337,9 +370,11 @@ EFI_STATUS J313BoardResourcesLoad(J313_SPI_RESOURCES *Resources) {
     Info->AdtBase-Info->AdtPagesBase>Info->AdtPagesSize-Info->AdtSize) return EFI_COMPROMISED_DATA;
  Copy=AllocateCopyPool((UINTN)Info->AdtSize,(VOID *)(UINTN)Info->AdtBase);
  if(Copy==NULL) return EFI_OUT_OF_RESOURCES;
- Result=J313BoardResourcesParse(Copy,(UINTN)Info->AdtSize,Resources);
+ Result=J313BoardResourcesParseEx(Copy,(UINTN)Info->AdtSize,Resources,&Diagnostic);
  FreePool(Copy);
  if(Result) DEBUG((DEBUG_ERROR,"J313 ADT resource failure %d: 1=structure, 2=identity/compatible, 3=reg/ranges, 4=clock-gates/pmgr devices/ps-regs, 5=allocation\n",Result));
+ if(Result==1) DEBUG((DEBUG_ERROR,"J313 ADT detail reason=%u offset=%Lu node=%Lu property=%a\n",
+  Diagnostic.Reason,(UINT64)Diagnostic.Offset,(UINT64)Diagnostic.NodeIndex,Diagnostic.Property));
  return Result==0?EFI_SUCCESS:(Result==5?EFI_OUT_OF_RESOURCES:EFI_UNSUPPORTED);
 }
 #endif

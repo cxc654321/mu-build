@@ -49,6 +49,7 @@
   MsBootManagerSettingsLib
   MsPlatformPowerCheckLib
   ThermalServicesLib
+  TimerLib
   PowerServicesLib
   MsNVBootReasonLib
   BootGraphicsLib
