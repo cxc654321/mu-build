@@ -1283,26 +1283,27 @@ DeviceBootManagerUnableToBoot (
   // option until the variable store is actually backed by something persistent.
   // Revisit if/when that lands.
   //
+  DEBUG ((DEBUG_ERROR, "[J313-BDS] NO-BOOT-OPTION: waiting for SWM readiness\n"));
   Status = WaitForSwmReady ();
   if (EFI_ERROR (Status)) {
-    DEBUG ((DEBUG_ERROR, "%a: SWM boot gate failed (%r)\n", __FUNCTION__, Status));
+    DEBUG ((DEBUG_ERROR, "[J313-BDS] SWM-GATE-FAILED: %r; returning to BDS final halt, no retry\n", Status));
     return;
   }
 
   Status = MsBootOptionsLibGetBootManagerMenu (&BootManagerMenu, NULL);
   if (EFI_ERROR (Status)) {
-    DEBUG ((DEBUG_ERROR, "%a: no Boot Manager Menu option (%r)\n", __FUNCTION__, Status));
+    DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-NOT-FOUND: %r; returning to BDS final halt\n", Status));
     return;
   }
 
-  DEBUG ((DEBUG_INFO, "%a: nothing bootable, entering Boot Manager Menu\n", __FUNCTION__));
+  DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-START: SWM available; input hardware not verified\n"));
   EfiBootManagerBoot (&BootManagerMenu);
   EfiBootManagerFreeLoadOption (&BootManagerMenu);
 
   //
-  // Returning hands control back to BDS, which loops and calls this again. That
-  // is the correct behaviour for a menu the user exited -- it re-displays --
-  // and unlike the old path it does not reset the machine to do it.
+  // BdsEntry calls PlatformBootManagerUnableToBoot once, then CpuDeadLoop.
+  // Returning here does not redisplay the menu or retry boot options.
+  // Keep the safe terminal policy, but make it visible instead of implying retry.
   //
-  DEBUG ((DEBUG_INFO, "%a: returned from Boot Manager Menu\n", __FUNCTION__));
+  DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-RETURNED: returning to BDS final halt, no retry\n"));
 }
