@@ -6,6 +6,7 @@
  */
 #include "spihid_protocol.h"
 #include "hid_keyboard.h"
+#include "key_queue.h"
 #include "observed_descriptor.h"
 #include <assert.h>
 #include <stdio.h>
@@ -18,6 +19,7 @@ struct pipeline {
     struct sh_rx rx;
     hk_descriptor descriptor;
     hk_state state;
+    kq_queue queue;
     unsigned decode_calls;
 };
 struct outcome {
@@ -25,6 +27,9 @@ struct outcome {
     int decoded;
     hk_status hid;
     hk_result keys;
+    int queue_fed;
+    kq_status queued;
+    kq_queue queue_before;
 };
 static struct pipeline pipeline; /* Descriptor is too large for firmware stacks. */
 
@@ -37,6 +42,7 @@ static struct outcome feed(const uint8_t *packet, size_t size)
 {
     struct sh_message message;
     struct outcome out = {0};
+    memcpy(&out.queue_before, &pipeline.queue, sizeof(pipeline.queue));
     out.transport = sh_feed(&pipeline.rx, packet, size, &message);
     if (out.transport != SH_MESSAGE || message.flags != 0x20 ||
         message.device != 1 || message.unknown0 != 0x10 || !message.length)
@@ -45,6 +51,10 @@ static struct outcome feed(const uint8_t *packet, size_t size)
     ++pipeline.decode_calls;
     out.hid = hk_decode(&pipeline.descriptor, &pipeline.state,
                        message.payload, message.length, &out.keys);
+    if (out.hid == HK_OK) {
+        out.queue_fed = 1;
+        out.queued = kq_feed(&pipeline.queue, &out.keys);
+    }
     return out;
 }
 static void le16(uint8_t *p, size_t n)
@@ -96,14 +106,35 @@ static void quiet(struct outcome out, const hk_state *old,
     assert(out.transport == transport && out.decoded == decoded);
     if (decoded) assert(out.hid == hid);
     assert(out.keys.count == 0);
+    assert(out.queue_fed == (decoded && hid == HK_OK));
+    if (out.queue_fed) assert(out.queued == KQ_OK);
+    assert(memcmp(&out.queue_before, &pipeline.queue, sizeof(pipeline.queue)) == 0);
     assert(memcmp(old, &pipeline.state, sizeof(*old)) == 0);
 }
 static void event(struct outcome out, uint8_t usage, uint8_t pressed)
 {
     assert(out.transport == SH_MESSAGE && out.decoded && out.hid == HK_OK);
+    assert(out.queue_fed && out.queued == KQ_OK);
     assert(out.keys.count == 1);
     assert(out.keys.events[0].usage == usage);
     assert(out.keys.events[0].pressed == pressed);
+}
+static void pop_key(uint16_t character, uint16_t scan, uint32_t modifiers)
+{
+    kq_key key;
+    assert(kq_pop(&pipeline.queue, &key) == KQ_OK);
+    assert(key.unicode_char == character && key.scan_code == scan);
+    assert(key.shift_state == (KQ_SHIFT_VALID | modifiers));
+    assert(key.toggle_state == KQ_TOGGLE_VALID);
+}
+static void empty_queue(void)
+{
+    kq_key key, before;
+    memset(&key, 0xa5, sizeof(key));
+    memcpy(&before, &key, sizeof(key));
+    assert(pipeline.queue.count == 0);
+    assert(kq_pop(&pipeline.queue, &key) == KQ_EMPTY);
+    assert(memcmp(&key, &before, sizeof(key)) == 0);
 }
 static void test_filters_and_errors(void)
 {
@@ -114,6 +145,8 @@ static void test_filters_and_errors(void)
     hk_state old = pipeline.state;
     size_t total, n;
     unsigned before;
+    assert(out.queue_fed && out.queued == KQ_OK);
+    assert(pipeline.queue.count == 1 && pipeline.queue.dropped == 0);
     assert(out.keys.count == 2 && out.keys.modifiers == 2);
     assert(out.keys.events[0].usage == 4 && out.keys.events[0].pressed == 1);
     assert(out.keys.events[1].usage == 0xe1 && out.keys.events[1].pressed == 1);
@@ -172,6 +205,12 @@ static void test_filters_and_errors(void)
     assert(out.hid == HK_OK && out.keys.count == 2 && !out.keys.modifiers);
     assert(out.keys.events[0].usage == 4 && !out.keys.events[0].pressed);
     assert(out.keys.events[1].usage == 0xe1 && !out.keys.events[1].pressed);
+    assert(out.queue_fed && out.queued == KQ_OK);
+    assert(pipeline.queue.count == 1 && pipeline.queue.dropped == 0);
+    assert(pipeline.queue.shift_state == KQ_SHIFT_VALID);
+    /* Buffered Shift+A retains press-time modifiers after the release. */
+    pop_key('A', 0, 2);
+    empty_queue();
     puts("PASS filters, CRC/length/HID errors, consumer/vendor isolation, release");
 }
 static void test_fragmentation(void)
@@ -205,7 +244,61 @@ static void test_fragmentation(void)
     quiet(feed(p, sizeof(p)), &old, SH_SEQUENCE, 0, HK_OK);
     /* After rejection, a fresh valid release recovers the stream. */
     event(report(up, sizeof(up)), 4, 0);
+    assert(pipeline.queue.count == total && pipeline.queue.dropped == 0);
+    for (offset = 0; offset < total; ++offset) pop_key('a', 0, 0);
+    empty_queue();
     puts("PASS every two-fragment split, bytewise reassembly, corruption recovery");
+}
+static void test_queue_translation_and_overflow(void)
+{
+    const uint8_t up[10] = {1};
+    const uint8_t arrows[10] = {1, 0, 0, 0x4f, 0x50, 0x51, 0x52};
+    const uint16_t scans[] = {3, 4, 2, 1}; /* Right, Left, Down, Up. */
+    uint8_t down[10] = {1, 0, 0, 4};
+    struct outcome out;
+    size_t i;
+    empty_queue();
+    out = report(arrows, sizeof(arrows));
+    assert(out.transport == SH_MESSAGE && out.decoded && out.hid == HK_OK);
+    assert(out.queue_fed && out.queued == KQ_OK && out.keys.count == 4);
+    assert(pipeline.queue.count == 4);
+    out = report(up, sizeof(up));
+    assert(out.queue_fed && out.queued == KQ_OK && out.keys.count == 4);
+    assert(pipeline.queue.count == 4);
+    for (i = 0; i < 4; ++i) pop_key(0, scans[i], 0);
+    empty_queue();
+
+    /* Generate distinct press/release edges through SPI, never fabricate hk_result.
+     * Alternating a/b checks FIFO order, not just the final queue length. */
+    for (i = 0; i < KQ_CAPACITY; ++i) {
+        down[3] = (uint8_t)(4 + i % 2);
+        event(report(down, sizeof(down)), down[3], 1);
+        event(report(up, sizeof(up)), down[3], 0);
+        assert(pipeline.queue.count == i + 1 && pipeline.queue.dropped == 0);
+    }
+    down[1] = 2; down[3] = 6; /* Shift+C: newest key must be dropped. */
+    out = report(down, sizeof(down));
+    assert(out.transport == SH_MESSAGE && out.decoded && out.hid == HK_OK);
+    assert(out.queue_fed && out.queued == KQ_OVERFLOW);
+    assert(pipeline.queue.count == KQ_CAPACITY && pipeline.queue.dropped == 1);
+    assert(pipeline.queue.shift_state == (KQ_SHIFT_VALID | 2));
+    out = report(down, sizeof(down)); /* Held key is not a second overflow. */
+    assert(out.queue_fed && out.queued == KQ_OK && out.keys.count == 0);
+    out = report(up, sizeof(up)); /* Release while full is not an overflow. */
+    assert(out.queue_fed && out.queued == KQ_OK && out.keys.count == 2);
+    assert(pipeline.queue.count == KQ_CAPACITY && pipeline.queue.dropped == 1);
+    assert(pipeline.queue.shift_state == KQ_SHIFT_VALID);
+    for (i = 0; i < KQ_CAPACITY; ++i) pop_key((uint16_t)('a' + i % 2), 0, 0);
+    empty_queue();
+    /* A fresh press after draining recovers, without resetting the loss counter. */
+    out = report(down, sizeof(down));
+    assert(out.queue_fed && out.queued == KQ_OK && pipeline.queue.count == 1);
+    pop_key('C', 0, 2);
+    out = report(up, sizeof(up));
+    assert(out.queue_fed && out.queued == KQ_OK);
+    assert(pipeline.queue.dropped == 1);
+    empty_queue();
+    puts("PASS queued characters/modifiers, four arrow scans, FIFO overflow and recovery");
 }
 int main(void)
 {
@@ -213,9 +306,11 @@ int main(void)
     assert(hk_parse(observed_descriptor, sizeof(observed_descriptor),
                     &pipeline.descriptor) == HK_OK);
     hk_state_init(&pipeline.state);
+    kq_init(&pipeline.queue);
     sh_reset(&pipeline.rx);
     test_filters_and_errors();
     test_fragmentation();
+    test_queue_translation_and_overflow();
     printf("ALL PIPELINE TESTS PASSED (%u synchronous HID decodes)\n",
            pipeline.decode_calls);
     return 0;

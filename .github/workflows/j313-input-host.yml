@@ -1,0 +1,28 @@
+name: j313-input-host
+
+on:
+  push:
+    branches: [ main, test/j313-swm-readiness-20261103 ]
+    paths:
+      - "Experimental/J313KeyQueue/**"
+      - "Experimental/J313InputPipeline/**"
+      - "Experimental/J313HidKeyboard/**"
+      - "Experimental/J313SpiHidProtocol/**"
+      - ".github/workflows/j313-input-host.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  input-host:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Key translation and FIFO (not hardware)
+        run: make -C Experimental/J313KeyQueue CC=clang test sanitize
+      - name: Synthetic SPI to HID pipeline (not hardware)
+        run: make -C Experimental/J313InputPipeline all

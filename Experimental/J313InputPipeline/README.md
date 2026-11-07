@@ -2,7 +2,7 @@
 # J313 input pipeline: host-only integration replay
 
 This is an offline integration regression test, **not a working J313 keyboard
-or a firmware driver**. Only this new directory is changed. No UEFI, MMIO,
+or a firmware driver**. Only this integration-test directory is changed. No UEFI, MMIO,
 SPI I/O, HID device opening, deployment, firmware linking, or push is involved.
 
 ## Data provenance and selector policy
@@ -43,7 +43,8 @@ The full source was retrieved and checked (HTTP 200, not truncated):
 The adapter is a static test-local function, not a new firmware library/API:
 
 1. Parse the immutable observed descriptor with hk_parse, initialize hk_state
-   and sh_rx once. The large descriptor has static storage.
+   and sh_rx once, and initialize the real kq_queue with kq_init. The large
+   descriptor has static storage.
 2. feed accepts one complete 256-byte packet per call, using existing sh_feed
    for outer CRC, continuous reassembly, exact message length and inner CRC.
 3. Decode only SH_MESSAGE + flags=0x20 + device=1 + unknown0=0x10 + nonempty
@@ -60,7 +61,10 @@ The adapter is a static test-local function, not a new firmware library/API:
 6. outcome.transport is always meaningful. outcome.hid is meaningful only
    when outcome.decoded is true. Emit events only for a decoded HK_OK result;
    zero modifiers on an error/ignored result do not mean a release. Decoder
-   failures leave the previous complete keyboard state unchanged.
+   failures leave the previous complete keyboard state unchanged. Each HK_OK
+   result is fed exactly once into the existing kq_feed; outcome.queue_fed
+   indicates whether outcome.queued is meaningful (KQ_OK or KQ_OVERFLOW).
+   Transport/routing/HID failures never feed or mutate the queue.
 7. Consumer/vendor input contributes no keyboard events and must not erase
    keys held by report 1. An actual valid all-up report 1 does release keys.
    A full keyboard report with unchanged keys and changed ignored trailing
@@ -77,7 +81,8 @@ make sanitize
 make all
 ~~~
 
-[Makefile](<Makefile>) links the existing protocol and keyboard C sources only
+[Makefile](<Makefile>) links the existing protocol, keyboard and
+[key queue](<../J313KeyQueue/key_queue.c>) C sources only
 into local host executables. Assertions are mandatory (NDEBUG is rejected).
 Temporary executables live here and are removed on command exit; -g0 avoids
 macOS dSYM side files. No sibling Makefile or library is modified.
@@ -89,7 +94,8 @@ UndefinedBehaviorSanitizer, both exit 0; no sanitizer diagnostics. Both print:
 ~~~text
 PASS filters, CRC/length/HID errors, consumer/vendor isolation, release
 PASS every two-fragment split, bytewise reassembly, corruption recovery
-ALL PIPELINE TESTS PASSED (61 synchronous HID decodes)
+PASS queued characters/modifiers, four arrow scans, FIFO overflow and recovery
+ALL PIPELINE TESTS PASSED (132 synchronous HID decodes)
 ~~~
 
 Coverage includes A + left Shift press/release, repeated unchanged report,
@@ -104,6 +110,23 @@ fragments, interrupted reassembly, orphan continuation rejection and recovery
 on a fresh valid release are replayed through the actual linked C libraries.
 The CRC fixture generator uses the existing CRC primitive: this is integration
 coverage, not an independent CRC oracle or new wire-format discovery.
+
+The real queue is exercised solely via sh_feed -> hk_decode -> kq_feed, never
+with hand-built hk_result batches. Every quiet path compares a byte-for-byte
+queue snapshot, including buffered keys, counters and modifier state: outer/inner
+CRC errors, filters, HID failures, repeated reports and consumer/vendor reports
+cannot alter it. Shift+A remains buffered throughout those checks; after release,
+kq_pop returns Unicode A, scan 0 and press-time left Shift (valid bit + 2),
+while current queue modifiers are cleared. Fragmented messages yield exactly
+twenty lowercase a keys. All four arrows return Unicode 0 and scan codes
+Right=3, Left=4, Down=2, Up=1, with valid unshifted modifiers/toggle state.
+
+Overflow is observed through the adapter return status and dropped counter:
+32 alternating a/b presses fill the FIFO; a new Shift+C yields KQ_OVERFLOW,
+count remains 32 and dropped becomes 1. Repeated held input and release do not
+add keys or increment drops, even while full. Draining verifies all original
+a/b keys in order (drop-newest), and a fresh Shift+C after draining succeeds
+without erasing the loss counter. Empty pops preserve their output argument.
 
 ## Licensing boundary
 
@@ -123,6 +146,9 @@ redistribution of its copies/substantial portions, including in the combined
 host distribution. It is not relicensed by this README. The descriptor is
 observed device-description data, not an imported implementation.
 
+The unmodified key queue sources retain their MIT SPDX notices; this GPL host
+test does not relicense that independent module.
+
 Only host linking occurs. No firmware module/build graph or firmware license
 is changed. Any future firmware integration/distribution requires separate
 license-compatibility review and authorization; this test gives no clearance.
@@ -137,7 +163,8 @@ and recovery are not integrated. A future transport must call sh_reset on
 bus failure/timeout/cancel; policy for stuck held keys/disconnect remains a
 separate decision, not an invented release on malformed data.
 
-No UEFI SimpleTextIn/Ex installation, scan-code/Unicode/layout translation,
-repeat, lock/LED output, event queue, concurrency lifecycle or touchpad support
-is supplied. No secure-boot, deployment or hardware functionality claim is
+The existing host key queue supplies limited US-layout Unicode/scan translation
+and a bounded FIFO here, not a UEFI protocol or hardware driver. No UEFI
+SimpleTextIn/Ex installation, repeat, hardware lock/LED output, concurrency
+lifecycle or touchpad support is supplied. No secure-boot, deployment or hardware functionality claim is
 made. The safe result is an offline, reproducible integration test only.

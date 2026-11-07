@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 CC = clang
-CPPFLAGS += -I../J313SpiHidProtocol -I../J313HidKeyboard
+CPPFLAGS += -I../J313SpiHidProtocol -I../J313HidKeyboard -I../J313KeyQueue
 WARN = -std=c11 -Wall -Wextra -Wpedantic -Werror
-SOURCES = test_pipeline.c ../J313SpiHidProtocol/spihid_protocol.c ../J313HidKeyboard/hid_keyboard.c
+SOURCES = test_pipeline.c ../J313SpiHidProtocol/spihid_protocol.c ../J313HidKeyboard/hid_keyboard.c ../J313KeyQueue/key_queue.c
 # Build only in this new directory; remove temporary executable on exit.
 .PHONY: all test sanitize
 all: test sanitize
