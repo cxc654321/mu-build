@@ -54,7 +54,18 @@ int main(void)
  start();assert(js_tick(&s,1000)==JS_ERROR); /* request deadline */
  js_start(&s,10);assert(js_tick(&s,9)==JS_ERROR);
  handshake(0);js_stop(&s);assert(js_packet(&s,2,p,&a,&keys)==JS_ERROR && !keys.count);
- start();assert(packet(0x40,0xd0,0x20,1,0xd0,99,0,report,6)==JS_ERROR); /* wrong ID */
+ start();assert(packet(0x40,0xd0,0x20,1,0xd0,99,0,report,6)==JS_DROP); /* wrong ID: never accepted */
+ assert(s.phase==JS_INIT && s.init.requests==1 && s.init.started_ms==0);
+ assert(js_tick(&s,1000)==JS_ERROR); /* unrelated replies cannot extend deadline */
+ start();
+ assert(packet(0x20,2,0x10,0,0,0,0,report,6)==JS_DROP); /* touch report interleaved */
+ memset(p,0,sizeof(p));p[4]=3;p[6]=0xac;p[7]=5;
+ assert(packet(0x40,0xd0,0x20,1,0xd0,0,0,p,24)==JS_TX);
+ assert(s.phase==JS_INIT && s.init.phase==SH_INIT_IFACE1);
+ start();
+ for(unsigned i=0;i<63;i++)
+  assert(packet(0x20,2,0x10,0,0,0,0,report,6)==JS_DROP);
+ assert(packet(0x20,2,0x10,0,0,0,0,report,6)==JS_ERROR); /* event budget retained */
  handshake(0);memset(p,0,sizeof(p));p[0]=0x20;p[1]=1;p[4]=10;p[6]=1;
  le(p+254,sh_crc16(p,254));assert(js_packet(&s,2,p,&a,&keys)==JS_WAIT);
  assert(js_tick(&s,102)==JS_ERROR); /* fragment cannot live indefinitely */

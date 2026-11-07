@@ -37,6 +37,9 @@ static int init_result(struct j313_session *s, int r)
 {
  size_t n;
  const uint8_t *d;
+ /* A CRC-valid unrelated reply is not a terminal handshake failure.
+  * Keep the existing deadline and event budget; never accept its descriptor. */
+ if (r == SH_INIT_REJECT) { s->detail = r; return JS_DROP; }
  if (r < 0) return failed(s, r);
  if (r == SH_INIT_REQUEST) return JS_TX;
  if (r != SH_INIT_COMPLETE) return JS_WAIT;

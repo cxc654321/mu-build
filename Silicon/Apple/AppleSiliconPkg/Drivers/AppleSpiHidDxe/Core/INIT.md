@@ -1,5 +1,9 @@
 <!-- SPDX-License-Identifier: GPL-2.0-only -->
-# J313 SPI-HID：离线初始化状态机 Phase
+# J313 SPI-HID：初始化状态机来源与协议约束
+
+> 本文件后文保留最初离线开发记录。当前目录是生产 DXE Core 移植，已由父目录主驱动实际调用；原 `test_init.c` 未复制到此目录，当前生产测试是 `test_session.c` 和仓库根 `Tests/test_spihid_safe_entry.py`。原实验实现和测试仍在 `Experimental/J313SpiHidProtocol`。
+> 集成层将 SH_INIT_REJECT 作为丢弃消息处理，保留阶段 deadline 和事件预算，不因无关输入立刻终止，也不接受错误关联响应。其他负值仍终止。
+> 下面的历史相对文档路径不适用于本移植目录；请通过同目录 PROVENANCE 和 PORTING 文档核对来源。实机握手尚未验证。
 
 仅新增 [sh_init.h](sh_init.h)、[sh_init.c](sh_init.c)、[test_init.c](test_init.c) 与本文。既有协议/README不变；无 MMIO、SPI 调用、电源操作、固件构建接入、输入安装、push 或部署。
 

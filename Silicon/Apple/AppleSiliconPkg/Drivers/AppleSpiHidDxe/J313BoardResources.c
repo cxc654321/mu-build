@@ -294,7 +294,7 @@ static int ParseResources(const void *blob,size_t size,J313_SPI_RESOURCES *out, 
     !reg_at(b,&workspace,"/arm-io/nub-gpio",0,&r.NubBase,&r.NubSize) ||
     !reg_at(b,&workspace,"/arm-io/pmgr",0,&r.PmgrBase,&r.PmgrSize)) return 3;
  if(r.SpiBase!=UINT64_C(0x23510c000) || r.SpiSize!=0x4000 ||
-    r.ApBase!=UINT64_C(0x23c100000) || r.ApSize<196*4 || r.ApSize>0x10000 ||
+    r.ApBase!=UINT64_C(0x23c100000) || r.ApSize<196*4 || r.ApSize>0x100000 ||
     r.NubBase!=UINT64_C(0x23d1f0000) || r.NubSize<14*4 || r.NubSize>0x10000 ||
     r.PmgrBase!=UINT64_C(0x23b700000) || r.PmgrSize>0x100000) return 3;
  p=get(b,&workspace,"/arm-io/spi3","clock-gates");

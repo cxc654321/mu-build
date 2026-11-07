@@ -54,6 +54,7 @@ struct J313_KEYBOARD {
   UINT64 LastId;
   PENDING_KEY Pending[KQ_CAPACITY];
   UINTN PendingHead, PendingCount;
+  UINT64 ResetGeneration;
   BOOLEAN Published, Busy, Dispatching, Closing;
 };
 #define FROM_IN(p) ((J313_KEYBOARD *)((UINT8 *)(p) - OFFSET_OF (J313_KEYBOARD, In)))
@@ -98,9 +99,10 @@ STATIC VOID EFIAPI Dispatch (EFI_EVENT Event, VOID *Context) {
   while (C->Published && C->PendingCount != 0 && Budget-- != 0) {
     PENDING_KEY Pending = C->Pending[C->PendingHead];
     KEY_NOTIFY *Node = C->Notifications;
+    UINT64 Generation = C->ResetGeneration;
     C->PendingHead = (C->PendingHead + 1) % KQ_CAPACITY;
     --C->PendingCount;
-    while (Node != NULL) {
+    while (Node != NULL && Generation == C->ResetGeneration) {
       KEY_NOTIFY *Next = Node->Next;
       if (Node->Active && Node->Id <= Pending.LastId && Matches (&Node->Key, &Pending.Key)) {
         EFI_KEY_NOTIFY_FUNCTION Function = Node->Function;
@@ -139,12 +141,14 @@ STATIC EFI_STATUS EFIAPI ReadKeyEx (EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *This, EFI
   return Read (FROM_EX (This), Key);
 }
 STATIC EFI_STATUS EFIAPI Reset (EFI_SIMPLE_TEXT_INPUT_PROTOCOL *This, BOOLEAN Extended) {
-  (VOID)Extended;
-  return This == NULL ? EFI_INVALID_PARAMETER : EFI_UNSUPPORTED;
+  if (This == NULL) { return EFI_INVALID_PARAMETER; }
+  /* Basic reset clears software input, like UsbKbDxe. Extended hardware
+   * diagnostics are not implemented; do not pretend they succeeded. */
+  return Extended ? EFI_UNSUPPORTED : J313KeyboardResetQueue (FROM_IN (This));
 }
 STATIC EFI_STATUS EFIAPI ResetEx (EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *This, BOOLEAN Extended) {
-  (VOID)Extended;
-  return This == NULL ? EFI_INVALID_PARAMETER : EFI_UNSUPPORTED;
+  if (This == NULL) { return EFI_INVALID_PARAMETER; }
+  return Extended ? EFI_UNSUPPORTED : J313KeyboardResetQueue (FROM_EX (This));
 }
 STATIC EFI_STATUS EFIAPI SetState (EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *This, EFI_KEY_TOGGLE_STATE *State) {
   J313_KEYBOARD *C;
@@ -213,6 +217,7 @@ EFI_STATUS J313KeyboardResetQueue (J313_KEYBOARD *C) {
   if (C == NULL) { return EFI_INVALID_PARAMETER; }
   Old = gBS->RaiseTPL (TPL_NOTIFY);
   kq_init (&C->Queue); C->Modifiers = 0; C->PendingHead = C->PendingCount = 0;
+  ++C->ResetGeneration; /* Invalidate the key already dequeued by Dispatch. */
   gBS->RestoreTPL (Old);
   return EFI_SUCCESS;
 }

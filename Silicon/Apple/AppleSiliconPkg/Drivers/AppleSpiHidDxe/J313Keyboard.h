@@ -16,8 +16,8 @@ typedef struct J313_KEYBOARD J313_KEYBOARD;
  * Queue drops newest on overflow (EFI_OUT_OF_RESOURCES); state still advances.
  * Unpublish failure retains every protocol/event/context; caller must not free
  * or unload driver. Destroy failure likewise retains *Context for retry.
- * ResetQueue is SOFTWARE ONLY: parent may call after verified transport reset;
- * it does not claim to reset hardware. Protocol Reset returns EFI_UNSUPPORTED.
+ * ResetQueue and protocol Reset(FALSE) clear software queues only; no bus reset
+ * or hardware diagnostic is implied. Reset(TRUE) returns EFI_UNSUPPORTED.
  */
 EFI_STATUS J313KeyboardCreate (OUT J313_KEYBOARD **Context);
 EFI_STATUS J313KeyboardPublish (IN J313_KEYBOARD *Context);

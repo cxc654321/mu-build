@@ -75,6 +75,12 @@ static EFI_STATUS EFIAPI Notify(EFI_KEY_DATA *Key) {
   assert(J313KeyboardDestroy(&Keyboard)==EFI_UNSUPPORTED); /* cannot destroy in callback */
   assert(Keyboard!=NULL); return EFI_SUCCESS;
 }
+static EFI_STATUS EFIAPI ResetNotify(EFI_KEY_DATA *Key) {
+  assert(Tpl==TPL_CALLBACK); assert(Key->Key.UnicodeChar=='a');
+  ++Calls;
+  assert(Keyboard->Ex.Reset(&Keyboard->Ex,FALSE)==EFI_SUCCESS);
+  return EFI_SUCCESS;
+}
 int main(void) {
   EFI_KEY_DATA Key={0}, Pattern={0}; EFI_INPUT_KEY Basic={0}; VOID *Duplicate;
   EFI_KEY_TOGGLE_STATE State; hk_result R={0}; int I;
@@ -90,7 +96,7 @@ int main(void) {
   FailInstall=0; assert(J313KeyboardPublish(Keyboard)==EFI_SUCCESS); assert(Installs==1);
   assert(J313KeyboardGetHandle(Keyboard)==&Services);
   assert(J313KeyboardPublish(Keyboard)==EFI_ALREADY_STARTED);
-  assert(Keyboard->In.Reset(&Keyboard->In,FALSE)==EFI_UNSUPPORTED);
+  assert(Keyboard->In.Reset(&Keyboard->In,FALSE)==EFI_SUCCESS);
   assert(Keyboard->Ex.Reset(&Keyboard->Ex,TRUE)==EFI_UNSUPPORTED);
   assert(Keyboard->Ex.ReadKeyStrokeEx(&Keyboard->Ex,&Key)==EFI_NOT_READY);
   Pattern.Key.UnicodeChar='a';
@@ -132,6 +138,28 @@ int main(void) {
   assert(J313KeyboardFeed(Keyboard,&R)==EFI_OUT_OF_RESOURCES);
   Tpl=TPL_APPLICATION; Pump(); assert(OtherCalls==(int)KQ_CAPACITY);
   assert(J313KeyboardResetQueue(Keyboard)==EFI_SUCCESS);
+  assert(Keyboard->Ex.UnregisterKeyNotify(&Keyboard->Ex,OtherHandle)==EFI_SUCCESS);
+  /* Basic reset cancels pending notifications and drains both readers. */
+  assert(Keyboard->Ex.RegisterKeyNotify(&Keyboard->Ex,&Pattern,Other,&OtherHandle)==EFI_SUCCESS);
+  assert(J313KeyboardFeed(Keyboard,&R)==EFI_SUCCESS);
+  assert(Keyboard->In.Reset(&Keyboard->In,TRUE)==EFI_UNSUPPORTED);
+  assert(Keyboard->PendingCount==1 && Keyboard->Queue.count==1);
+  assert(Keyboard->In.Reset(&Keyboard->In,FALSE)==EFI_SUCCESS);
+  Pump(); assert(OtherCalls==(int)KQ_CAPACITY);
+  assert(Keyboard->Ex.ReadKeyStrokeEx(&Keyboard->Ex,&Key)==EFI_NOT_READY);
+  assert(Keyboard->In.ReadKeyStroke(&Keyboard->In,&Basic)==EFI_NOT_READY);
+  assert(!Check(Keyboard->In.WaitForKey) && !Check(Keyboard->Ex.WaitForKeyEx));
+  /* Reset from first callback cancels the in-flight key for later callbacks,
+   * as well as the second pending key. Registration nodes remain valid. */
+  assert(Keyboard->Ex.RegisterKeyNotify(&Keyboard->Ex,&Pattern,ResetNotify,&SelfHandle)==EFI_SUCCESS);
+  assert(J313KeyboardFeed(Keyboard,&R)==EFI_SUCCESS);
+  assert(J313KeyboardFeed(Keyboard,&R)==EFI_SUCCESS);
+  Pump(); assert(Calls==2 && OtherCalls==(int)KQ_CAPACITY);
+  assert(Keyboard->PendingCount==0 && Keyboard->Queue.count==0);
+  assert(Keyboard->Ex.UnregisterKeyNotify(&Keyboard->Ex,SelfHandle)==EFI_SUCCESS);
+  assert(J313KeyboardFeed(Keyboard,&R)==EFI_SUCCESS);
+  Pump(); assert(OtherCalls==(int)KQ_CAPACITY+1);
+  assert(Keyboard->Ex.Reset(&Keyboard->Ex,FALSE)==EFI_SUCCESS);
   assert(Keyboard->Ex.UnregisterKeyNotify(&Keyboard->Ex,OtherHandle)==EFI_SUCCESS);
   /* Tombstones bound allocation and prevent stale handle ABA reuse. */
   while(Keyboard->LastId<128) {

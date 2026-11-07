@@ -39,6 +39,10 @@ class TestBoard(unittest.TestCase):
     def test_valid(self):
         r=self.check(fixture(),True);self.assertEqual(r.spi,0x23510c000);self.assertEqual(r.count,4)
         self.assertEqual(list(r.offsets)[:4],[8,0x130,0x1b80080,0x258])
+    def test_ap_public_window(self):
+        b=fixture().replace(reg(0x3c100000,0x4000),reg(0x3c100000,0x100000),1)
+        self.assertEqual(self.check(b,True).aps,0x100000)
+        self.check(b.replace(reg(0x3c100000,0x100000),reg(0x3c100000,0x100004),1),False)
     def test_all_prefixes(self):
         b=fixture()
         for n in range(len(b)):self.check(b[:n],False)
