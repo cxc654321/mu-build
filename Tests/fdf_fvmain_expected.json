@@ -235,7 +235,8 @@
         "INF MdeModulePkg/Universal/SetupBrowserDxe/SetupBrowserDxe.inf",
         "INF MdeModulePkg/Universal/DriverHealthManagerDxe/DriverHealthManagerDxe.inf",
         "INF MdeModulePkg/Universal/BdsDxe/BdsDxe.inf",
-        "INF AppleSiliconPkg/Drivers/J313MemMapDxe/J313MemMapDxe.inf"
+        "INF AppleSiliconPkg/Drivers/J313MemMapDxe/J313MemMapDxe.inf",
+        "INF AppleSiliconPkg/Drivers/AppleSpiHidDxe/AppleSpiHidDxe.inf"
       ]
     },
     {

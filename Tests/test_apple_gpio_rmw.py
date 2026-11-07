@@ -38,35 +38,23 @@ MOCK = r"""
 #define IN
 #define OUT
 #define EFIAPI
-typedef int EFI_STATUS;
+typedef uint64_t EFI_STATUS;
 typedef uint64_t UINTN;
 typedef uint32_t UINT32;
 typedef UINTN EMBEDDED_GPIO_PIN;
 typedef struct { int unused; } EMBEDDED_GPIO;
-typedef enum { GPIO_MODE_INPUT, GPIO_MODE_OUTPUT_0, GPIO_MODE_OUTPUT_1 } EMBEDDED_GPIO_MODE;
+typedef enum { GPIO_MODE_INPUT = 0, GPIO_MODE_OUTPUT_0 = 0x0e, GPIO_MODE_OUTPUT_1 = 0x0f } EMBEDDED_GPIO_MODE;
 #define EFI_SUCCESS 0
-#define EFI_UNSUPPORTED 3
-#define EFI_INVALID_PARAMETER 2
-#define EFI_NOT_FOUND 14
-#define EFI_ERROR(s) ((s) != EFI_SUCCESS)
+#define EFI_UNSUPPORTED (UINT64_C(0x8000000000000000) | 3)
+#define EFI_INVALID_PARAMETER (UINT64_C(0x8000000000000000) | 2)
+#define EFI_NOT_FOUND (UINT64_C(0x8000000000000000) | 14)
+#define EFI_ERROR(s) (((s) & UINT64_C(0x8000000000000000)) != 0)
 #define FALSE 0
 #define TRUE 1
 #define DEBUG(x) do {} while (0)
 static int assert_calls;
 #define ASSERT(x) do { assert_calls++; (void)(x); } while (0)
-#define BIT(x) (1UL << (x))
-#define GENMASK(msb, lsb) ((BIT((msb + 1) - (lsb)) - 1) << (lsb))
-/* Match ConvenienceMacros.h exactly: LSB is the bit value, not the index. */
-#define _FIELD_LSB(field) ((field) & ~(field - 1))
-#define FIELD_PREP(field, val) ((val) * (_FIELD_LSB(field)))
-#define FIELD_GET(field, val)  (((val) & (field)) / _FIELD_LSB(field))
-#define GPIO_REG(x) ((x) << 2)
-#define GPIOx_REG_DATA BIT(0)
-#define GPIOx_MODE GENMASK(3, 1)
-#define GPIOx_OUT_MODE 1
-#define GPIOx_IN_MODE_IRQ_OFF 7
-#define GPIOx_PERIPHERAL GENMASK(6, 5)
-#define GPIOx_INPUT_ENABLE BIT(9)
+#include "AppleEmbeddedGpioControllerDxe.h"
 
 /* Mock MMIO: array indexed by addr>>2, with read/write counters. */
 #define MEM_WORDS 0x40000
@@ -123,6 +111,31 @@ int main(void) {
   assert(AppleEmbeddedGpioControllerLocate(~0ull - 2, &idx, &off, &base) == EFI_SUCCESS);
   assert(idx == 2 && off == 2);
 
+  /* Boundary and empty-table cases; failure leaves outputs unchanged. */
+  const UINTN valid_pins[] = {0, 255, 260, 291};
+  const UINTN valid_offsets[] = {0, 255, 0, 31};
+  for (unsigned n = 0; n < 4; ++n) {
+    assert(AppleEmbeddedGpioControllerLocate(valid_pins[n], &idx, &off, &base) == EFI_SUCCESS);
+    assert(off == valid_offsets[n]);
+  }
+  const UINTN gaps[] = {256, 259, 292};
+  for (unsigned n = 0; n < 3; ++n) {
+    idx=17; off=18; base=19;
+    assert(AppleEmbeddedGpioControllerLocate(gaps[n], &idx, &off, &base) == EFI_NOT_FOUND);
+    assert(idx==17 && off==18 && base==19);
+  }
+  plat.GpioControllerCount=0;
+  assert(AppleEmbeddedGpioControllerLocate(0, &idx, &off, &base) == EFI_NOT_FOUND);
+  plat.GpioControllerCount=3;
+  ctrls[0].InternalGpioCount=0;
+  assert(AppleEmbeddedGpioControllerLocate(0, &idx, &off, &base) == EFI_NOT_FOUND);
+  assert(AppleEmbeddedGpioControllerLocate(273, &idx, &off, &base) == EFI_SUCCESS);
+  ctrls[0].InternalGpioCount=256;
+  reads=writes=0;
+  assert(AppleEmbeddedGpioGetGpio(&dummy, 273, NULL) == EFI_INVALID_PARAMETER);
+  assert(AppleEmbeddedGpioControllerGetMode(&dummy, 273, NULL) == EFI_INVALID_PARAMETER);
+  assert(reads==0 && writes==0);
+
   /* RMW: non-mask bits (pull/drive/lock/high bits) survive; stray bits in
      Value outside the mask are not written. Old code wrote raw Value and
      zeroed everything outside the field. */
@@ -165,7 +178,30 @@ int main(void) {
   /* Preserved bits from the earlier preset must still be there. */
   assert((mem[(BASE1 >> 2) + 13] & 0xABCD0000u & ~mask) == (0xABCD0000u & ~mask));
 
-  printf("PASS apple gpio locate/rmw/error-path\n");
+  /* Literal hardware expectations independent of FIELD_PREP/FIELD_GET:
+     output-low=0x002, output-high=0x003, input IRQ-off + enable=0x20e.
+     Exercise all four pull settings plus both register polarities. */
+  const EMBEDDED_GPIO_MODE modes[] = {GPIO_MODE_OUTPUT_0, GPIO_MODE_OUTPUT_1, GPIO_MODE_INPUT};
+  const uint32_t fields[] = {0x002, 0x003, 0x20e};
+  for (unsigned pull = 0; pull < 4; ++pull) {
+    for (unsigned polarity = 0; polarity < 2; ++polarity) {
+      for (unsigned m = 0; m < 3; ++m) {
+        uint32_t original = ((polarity ? 0xffffffffu : 0xa5a50000u) & ~0x180u) | (pull << 7);
+        mem[(BASE1 >> 2) + 13] = original;
+        reads = writes = 0;
+        assert(AppleEmbeddedGpioSetGpio(&dummy, 273, modes[m]) == EFI_SUCCESS);
+        assert(reads == 1 && writes == 1);
+        assert(last_write_val == ((original & ~0x26fu) | fields[m]));
+        assert((last_write_val & 0x180u) == (pull << 7));
+      }
+    }
+  }
+  /* Unsupported mode must not access the register. */
+  reads = writes = 0;
+  assert(AppleEmbeddedGpioSetGpio(&dummy, 273, (EMBEDDED_GPIO_MODE)99) == EFI_UNSUPPORTED);
+  assert(reads == 0 && writes == 0);
+
+  printf("PASS apple gpio locate/rmw/error-path/pull-preservation\n");
   return 0;
 }
 """
@@ -179,6 +215,8 @@ class AppleGpioTests(unittest.TestCase):
             src.write_text(MOCK + FUNCS + MAIN)
             subprocess.run(
                 ["clang", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter",
+                 "-I", str(SRC_PATH.parent),
+                 "-I", str(ROOT / "Silicon/Apple/AppleSiliconPkg/Include"),
                  str(src), "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True)
 
