@@ -25,6 +25,15 @@ typedef struct {
   size_t Offset;
   size_t NodeIndex;
   char Property[33];
+  /* Size is the supplied container span, not a claimed serialized tree size.
+   * TreeComplete gates Consumed/TailSize/TailAllZero: only set after the
+   * entire counted root tree passes structural checks. Empty tail is all zero.
+   * These are diagnostics only, never permission to discard trailing bytes. */
+  size_t Size;
+  size_t Consumed;
+  size_t TailSize;
+  uint32_t TreeComplete;
+  uint32_t TailAllZero;
 } J313_ADT_DIAGNOSTIC;
 int J313BoardResourcesParseEx(const void *Blob, size_t Size,
   J313_SPI_RESOURCES *Resources, J313_ADT_DIAGNOSTIC *Diagnostic);

@@ -62,7 +62,7 @@ class TestBoard(unittest.TestCase):
     def test_cycle_identity_and_trailing(self):
         self.check(fixture(True),False);self.check(fixture(target=b'j314\0'),False);self.check(fixture()+b'\0',False)
 class Diagnostic(C.Structure):
-    _fields_=[('reason',C.c_uint32),('offset',C.c_size_t),('node',C.c_size_t),('key',C.c_char*33)]
+    _fields_=[('reason',C.c_uint32),('offset',C.c_size_t),('node',C.c_size_t),('key',C.c_char*33),('size',C.c_size_t),('consumed',C.c_size_t),('tail_size',C.c_size_t),('tree_complete',C.c_uint32),('tail_all_zero',C.c_uint32)]
 
 class TestDiagnostic(TestBoard):
     def detail(self,b):
@@ -85,6 +85,21 @@ class TestDiagnostic(TestBoard):
         for tail in [b'\0',b'\0'*4096,b'private-secret']:
             status,d=self.detail(b+tail)
             self.assertEqual((status,d.reason,d.offset,d.key),(1,17,len(b),b''))
+    def test_container_tail_diagnostics_and_legacy(self):
+        b=fixture()
+        for tail in [b'',b'\0',b'\0'*4096,b'\xff',b'\0'*4095+b'\x01',b'\x01'+b'\0'*4095,node('second-root')]:
+            with self.subTest(length=len(tail),zero=not any(tail)):
+                status,d=self.detail(b+tail)
+                self.assertEqual(status,1 if tail else 0)
+                self.assertEqual((d.size,d.consumed,d.tail_size,d.tree_complete,d.tail_all_zero),
+                                 (len(b+tail),len(b),len(tail),1,int(not any(tail))))
+                self.assertEqual(d.node,C.c_size_t(-1).value)
+                self.assertEqual(d.key,b'')
+                self.check(b+tail,not tail) # legacy API remains strict
+        # Failed structural prefixes must not report guessed tree/tail lengths.
+        for n in range(len(b)):
+            status,d=self.detail(b[:n])
+            self.assertEqual((d.size,d.consumed,d.tail_size,d.tree_complete,d.tail_all_zero),(n,0,0,0,0))
     def test_structural_reason_branches(self):
         cases=[
             (b'\xd0\x0d\xfe\xed'+b'\0'*4,3,0),
@@ -141,10 +156,17 @@ assert syslib.mprotect(addr+page,page,0)==0
 b=fixture();assert len(b)<page
 cases=[b[:n] for n in range(len(b)+1)]
 cases += [b[:8]+b'X'*32+b[40:],b[:40]+(0x7fffffff).to_bytes(4,'little')+b[44:]]
+cases += [b+b'\0',b+b'\xff',b+b'\0'*(page-len(b)),b+b'\0'*(page-len(b)-1)+b'\x01']
 for data in cases:
     p=addr+page-len(data);C.memmove(p,data,len(data));r=Resources();d=Diagnostic()
     result=f(p,len(data),C.byref(r),C.byref(d))
     assert result==0 if data==b else result!=0
+    assert d.size==len(data)
+    if len(data)>=len(b) and data[:len(b)]==b:
+        assert (d.consumed,d.tail_size,d.tree_complete,d.tail_all_zero)==(len(b),len(data)-len(b),1,int(not any(data[len(b):])))
+    else:
+        assert (d.consumed,d.tail_size,d.tree_complete,d.tail_all_zero)==(0,0,0,0)
+    assert bytes(r)==bytes(C.sizeof(r)) if result else True
 assert syslib.mprotect(addr+page,page,mmap.PROT_READ|mmap.PROT_WRITE)==0
 '''
         subprocess.run([sys.executable,'-c',script,str(ROOT/'Tests'),str(pathlib.Path(self.tmp.name)/'board.so')],check=True)

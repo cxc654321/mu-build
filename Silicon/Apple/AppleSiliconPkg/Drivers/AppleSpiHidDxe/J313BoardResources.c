@@ -97,6 +97,7 @@ static radt_status fail(radt_workspace *w, radt_status status, uint32_t reason,
     if (!d) return status;
     memset(d, 0, sizeof(*d));
     d->Reason = reason; d->Offset = off; d->NodeIndex = node;
+    d->Size = size;
     if (b && key < size) {
         for (i = 0; i < 32 && i < size - key && b[key+i]; ++i)
             d->Property[i] = b[key+i] >= 33 && b[key+i] <= 126 ? (char)b[key+i] : '?';
@@ -174,10 +175,26 @@ radt_status radt_validate(const void *buffer, size_t size, radt_workspace *w)
         stack[depth].index = idx; stack[depth].left = nc; ++depth;
         while (depth && !stack[depth - 1].left) --depth;
     } while (depth);
-    /* Upstream readers return consumed length, but no verified bootargs tail
-     * padding contract is available. Keep strict rejection and diagnose it. */
-    if (off != size) return BAD(RADT_FORMAT, J313_ADT_TRAILING_BYTES, off, SIZE_MAX, SIZE_MAX);
-    if (w->diagnostic) w->diagnostic->Offset = off;
+    /* PrePi AdtParser.c publishes bootargs devtree_size, discarding dt_check
+     * consumed length. This is a copied container span, not proof of an exact
+     * tree length. m1n1 ADTNodeStruct is count-delimited with per-property
+     * 4-byte alignment; it specifies no whole-container tail padding rule.
+     * Do not guess zero padding or silently truncate this span. Retain strict
+     * rejection until the loader supplies an independently established tree
+     * length/contract. Reservation must continue covering the entire copy. */
+    if (off != size)
+        BAD(RADT_FORMAT, J313_ADT_TRAILING_BYTES, off, SIZE_MAX, SIZE_MAX);
+    if (w->diagnostic) {
+        size_t i;
+        J313_ADT_DIAGNOSTIC *d = w->diagnostic;
+        d->Size = size; d->Offset = off; d->Consumed = off;
+        d->TailSize = size - off; d->TreeComplete = 1; d->TailAllZero = 1;
+        /* Only aggregate ordinary copied memory within the checked span.
+         * No bytes, names, addresses or property values are exported. */
+        for (i = off; i < size; ++i)
+            if (b[i]) d->TailAllZero = 0;
+    }
+    if (off != size) return RADT_FORMAT;
 #undef BAD
     return RADT_OK;
 }
@@ -335,19 +352,19 @@ int J313BoardResourcesParseEx(const void *blob,size_t size,J313_SPI_RESOURCES *o
  J313_ADT_DIAGNOSTIC *diagnostic) {
  radt_workspace w; int result;
  memset(&w,0,sizeof(w)); w.diagnostic=diagnostic;
- if(diagnostic) { memset(diagnostic,0,sizeof(*diagnostic)); diagnostic->NodeIndex=SIZE_MAX; }
- if(!out) { fail(&w,RADT_ARGUMENT,J313_ADT_ARGUMENT,0,SIZE_MAX,NULL,0,SIZE_MAX); return 1; }
+ if(diagnostic) { memset(diagnostic,0,sizeof(*diagnostic)); diagnostic->NodeIndex=SIZE_MAX; diagnostic->Size=size; }
+ if(!out) { fail(&w,RADT_ARGUMENT,J313_ADT_ARGUMENT,0,SIZE_MAX,NULL,size,SIZE_MAX); return 1; }
  memset(out,0,sizeof(*out));
  if(!blob || size<8 || size>RADT_BYTES) {
   fail(&w,RADT_ARGUMENT,!blob?J313_ADT_ARGUMENT:(size<8?J313_ADT_NODE_HEADER:J313_ADT_SIZE_BUDGET),
-       0,size<8 && blob?0:SIZE_MAX,NULL,0,SIZE_MAX); return 1;
+       0,size<8 && blob?0:SIZE_MAX,NULL,size,SIZE_MAX); return 1;
  }
  /* Every named node needs >=48 bytes; every property >=36. Derive memory
   * budgets from the actual HOB length, not host-fixture population limits. */
  w.node_capacity=size/48+1; w.prop_capacity=size/36+1;
  w.nodes=BoardAllocate(w.node_capacity*sizeof(*w.nodes));
  w.props=BoardAllocate(w.prop_capacity*sizeof(*w.props));
- if(!w.nodes || !w.props) { fail(&w,RADT_BUDGET,J313_ADT_ALLOCATION,0,SIZE_MAX,NULL,0,SIZE_MAX); if(w.nodes) BoardFree(w.nodes); if(w.props) BoardFree(w.props); return 5; }
+ if(!w.nodes || !w.props) { fail(&w,RADT_BUDGET,J313_ADT_ALLOCATION,0,SIZE_MAX,NULL,size,SIZE_MAX); if(w.nodes) BoardFree(w.nodes); if(w.props) BoardFree(w.props); return 5; }
  result=ParseResources(blob,size,out,w);
  BoardFree(w.props); BoardFree(w.nodes);
  return result;
@@ -372,6 +389,9 @@ EFI_STATUS J313BoardResourcesLoad(J313_SPI_RESOURCES *Resources) {
  if(Copy==NULL) return EFI_OUT_OF_RESOURCES;
  Result=J313BoardResourcesParseEx(Copy,(UINTN)Info->AdtSize,Resources,&Diagnostic);
  FreePool(Copy);
+ DEBUG((DEBUG_ERROR,"J313 ADT span size=%Lu consumed=%Lu tail=%Lu tree_complete=%u tail_all_zero=%a\n",
+  (UINT64)Diagnostic.Size,(UINT64)Diagnostic.Consumed,(UINT64)Diagnostic.TailSize,
+  Diagnostic.TreeComplete,!Diagnostic.TreeComplete?"unknown":(Diagnostic.TailAllZero?"yes":"no")));
  if(Result) DEBUG((DEBUG_ERROR,"J313 ADT resource failure %d: 1=structure, 2=identity/compatible, 3=reg/ranges, 4=clock-gates/pmgr devices/ps-regs, 5=allocation\n",Result));
  if(Result==1) DEBUG((DEBUG_ERROR,"J313 ADT detail reason=%u offset=%Lu node=%Lu property=%a\n",
   Diagnostic.Reason,(UINT64)Diagnostic.Offset,(UINT64)Diagnostic.NodeIndex,Diagnostic.Property));

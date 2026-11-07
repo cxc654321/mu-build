@@ -1429,6 +1429,7 @@ DeviceBootManagerUnableToBoot (
   TraceGuiProtocols ();
   DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-START: SWM available; input hardware not verified\n"));
   J313PhotoPause ("MENU-START");
+  DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-CALL: invoking EfiBootManagerBoot after photo pause\n"));
   EfiBootManagerBoot (&BootManagerMenu);
   DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-STATUS: %r\n", BootManagerMenu.Status));
   J313PhotoPause ("MENU-STATUS");

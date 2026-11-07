@@ -167,6 +167,8 @@ jobs:
           python3 -B Tests/test_fdf_fvmain_expansion.py
           SWM_SOURCE_TREE="$PWD" python3 -B Tests/test_swm_readiness.py
           python3 Tools/swm-readiness.py --tree "$PWD" --apply
+          python3 -B Tests/test_j313_menu_trace.py
+          python3 Tools/j313-menu-trace.py --tree "$PWD" --apply
 
       - name: stuart_build
         id: build
