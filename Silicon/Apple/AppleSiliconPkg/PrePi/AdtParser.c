@@ -12,6 +12,9 @@
 #include <Library/AppleDTLib.h>
 #include <Library/PcdLib.h>
 #include "AdtCopyPlan.h"
+#include <Guid/AppleAdtInfoHob.h>
+
+APPLE_ADT_INFO_HOB gAppleAdtInfo;
 
 #define ALIGN_UP(x, a)   (((x) + ((a) - 1)) & ~((a) - 1))
 
@@ -35,6 +38,8 @@ EarlySetup (
   struct boot_args *BootArgs = (struct boot_args *)BootArgsAddr;
   VOID             *AdtSource;
   ADT_COPY_PLAN    Plan;
+
+  gAppleAdtInfo = (APPLE_ADT_INFO_HOB){0};
 
   // The loader must still supply a readable boot_args header. This checks
   // arithmetic/layout, not ownership of every loader/device live allocation.
@@ -67,6 +72,16 @@ EarlySetup (
     return FALSE;
   }
   DEBUG ((DEBUG_ERROR, "J813 EARLY: ADT validated\n"));
+
+  // Publish only after the actual copy and bounded structural validation.
+  gAppleAdtInfo.Version = APPLE_ADT_INFO_VERSION;
+  gAppleAdtInfo.Flags = 0;
+  gAppleAdtInfo.AdtBase = (UINT64)(UINTN)PcdAdtDest;
+  gAppleAdtInfo.AdtSize = BootArgs->devtree_size;
+  gAppleAdtInfo.AdtPagesBase = Plan.AdtPages.Base;
+  gAppleAdtInfo.AdtPagesSize = Plan.AdtPages.Size;
+  gAppleAdtInfo.BootArgsPagesBase = Plan.BootArgsPages.Base;
+  gAppleAdtInfo.BootArgsPagesSize = Plan.BootArgsPages.Size;
 
   *SystemMemoryBase = BootArgs->phys_base;
   *SystemMemorySize = BootArgs->phys_base + BootArgs->mem_size - BootArgs->phys_base;

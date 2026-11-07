@@ -24,11 +24,13 @@ static unsigned nlogs;
 static void record(int level, const char *format, ...) {
   assert(level == DEBUG_ERROR); assert(nlogs < 8); logs[nlogs++] = format;
 }
+// Real helper behavior is compiled in test_j313_gui_diagnostics.py.
+static void TraceGuiProtocols(void) {}
 static int WaitForSwmReady(void) { gates++; return gate_status; }
 static int MsBootOptionsLibGetBootManagerMenu(EFI_BOOT_MANAGER_LOAD_OPTION *o, void *p) {
   assert(o && !p); gets++; return menu_status;
 }
-static void EfiBootManagerBoot(EFI_BOOT_MANAGER_LOAD_OPTION *o) { assert(o); boots++; }
+static void EfiBootManagerBoot(EFI_BOOT_MANAGER_LOAD_OPTION *o) { assert(o); boots++; o->Status = 0; }
 static void EfiBootManagerFreeLoadOption(EFI_BOOT_MANAGER_LOAD_OPTION *o) { assert(o); frees++; }
 '''
 MAIN = r'''
@@ -44,9 +46,9 @@ int main(void) {
   assert(strstr(logs[1], "MENU-NOT-FOUND") && strstr(logs[1], "final halt"));
   gates=gets=boots=frees=nlogs=0; menu_status=0;
   DeviceBootManagerUnableToBoot();
-  assert(gates==1 && gets==1 && boots==1 && frees==1 && nlogs==3);
-  assert(strstr(logs[1], "MENU-START") && strstr(logs[2], "MENU-RETURNED"));
-  assert(strstr(logs[2], "final halt"));
+  assert(gates==1 && gets==1 && boots==1 && frees==1 && nlogs==4);
+  assert(strstr(logs[1], "MENU-START") && strstr(logs[2], "MENU-STATUS"));
+  assert(strstr(logs[3], "MENU-RETURNED") && strstr(logs[3], "final halt"));
   return 0;
 }
 '''

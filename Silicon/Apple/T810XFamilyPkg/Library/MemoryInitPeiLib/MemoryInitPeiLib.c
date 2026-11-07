@@ -26,6 +26,7 @@
 #include <Library/IoLib.h>
 #include <Library/PrintLib.h>
 #include <Library/AppleDTLib.h>
+#include <Guid/AppleAdtInfoHob.h>
 
 //Device memory map configuration file for UEFI (this is to help with pagetable initialization)
 #include <Library/T810XFamilyVirtualMemoryMapDefines.h>
@@ -137,6 +138,81 @@ STATIC VOID ReserveMemoryRegion ( IN EFI_PHYSICAL_ADDRESS ReservedRegionBase, IN
 }
 
 
+// Reserve the copied pages, not a guessed maximum ADT allocation. These pages
+// were excluded from the entire PHIT arena by EarlySetup's copy planner.
+STATIC BOOLEAN AdtPagesValid (UINT64 Base, UINT64 Size,
+                              UINT64 RamBase, UINT64 RamSize,
+                              UINT64 ArenaBase, UINT64 ArenaSize)
+{
+  if (!Size || (Base & 4095) || (Size & 4095) ||
+      Base < RamBase || Size > RamSize || Base - RamBase > RamSize - Size ||
+      Base > MAX_UINT64 - Size || ArenaBase > MAX_UINT64 - ArenaSize)
+    return FALSE;
+  return !(Base < ArenaBase + ArenaSize && ArenaBase < Base + Size);
+}
+
+STATIC BOOLEAN AdtPagesAvailable (UINT64 Base, UINT64 Size)
+{
+  EFI_PEI_HOB_POINTERS Hob;
+  UINT64 End = Base + Size;
+  BOOLEAN Covered = FALSE;
+  for (Hob.Raw = GetHobList (); !END_OF_HOB_LIST (Hob); Hob.Raw = GET_NEXT_HOB (Hob)) {
+    if (GET_HOB_TYPE (Hob) == EFI_HOB_TYPE_MEMORY_ALLOCATION) {
+      UINT64 Start = Hob.MemoryAllocation->AllocDescriptor.MemoryBaseAddress;
+      UINT64 Length = Hob.MemoryAllocation->AllocDescriptor.MemoryLength;
+      if (Length > MAX_UINT64 - Start || (Base < Start + Length && Start < End)) return FALSE;
+    }
+    if (GET_HOB_TYPE (Hob) == EFI_HOB_TYPE_RESOURCE_DESCRIPTOR) {
+      UINT64 Start = Hob.ResourceDescriptor->PhysicalStart;
+      UINT64 Length = Hob.ResourceDescriptor->ResourceLength;
+      if (Length > MAX_UINT64 - Start) return FALSE;
+      if (Base < Start + Length && Start < End) {
+        if (Hob.ResourceDescriptor->ResourceType != EFI_RESOURCE_SYSTEM_MEMORY) return FALSE;
+        if (Base >= Start && End <= Start + Length) Covered = TRUE;
+      }
+    }
+  }
+  return Covered;
+}
+
+STATIC EFI_STATUS ReserveAdtCopy (UINT64 ArenaBase, UINT64 ArenaSize)
+{
+  VOID *Hob;
+  APPLE_ADT_INFO_HOB *Info;
+  UINT64 RamBase = PcdGet64 (PcdSystemMemoryBase);
+  UINT64 RamSize = PcdGet64 (PcdSystemMemorySize);
+  Hob = GetFirstGuidHob (&gAppleSiliconPkgAdtInfoHobGuid);
+  // Legacy producers do not gain a keyboard capability, but still boot.
+  if (Hob == NULL) return EFI_SUCCESS;
+  if (GET_GUID_HOB_DATA_SIZE (Hob) != sizeof (*Info)) return EFI_COMPROMISED_DATA;
+  Info = GET_GUID_HOB_DATA (Hob);
+  if (Info->Version != APPLE_ADT_INFO_VERSION || Info->Flags != 0 ||
+      !AdtPagesValid (Info->AdtPagesBase, Info->AdtPagesSize, RamBase, RamSize, ArenaBase, ArenaSize) ||
+      !AdtPagesValid (Info->BootArgsPagesBase, Info->BootArgsPagesSize, RamBase, RamSize, ArenaBase, ArenaSize) ||
+      !Info->AdtSize || Info->AdtBase < Info->AdtPagesBase ||
+      Info->AdtSize > Info->AdtPagesSize ||
+      Info->AdtBase - Info->AdtPagesBase > Info->AdtPagesSize - Info->AdtSize ||
+      (Info->AdtPagesBase < Info->BootArgsPagesBase + Info->BootArgsPagesSize &&
+       Info->BootArgsPagesBase < Info->AdtPagesBase + Info->AdtPagesSize))
+    return EFI_COMPROMISED_DATA;
+  if (!AdtPagesAvailable (Info->AdtPagesBase, Info->AdtPagesSize) ||
+      !AdtPagesAvailable (Info->BootArgsPagesBase, Info->BootArgsPagesSize))
+    return EFI_COMPROMISED_DATA;
+  // BuildMemoryAllocationHob is void/assert-on-exhaustion in PrePiHobLib.
+  // Check PHIT space for both allocations and the terminating HOB first.
+  {
+    EFI_HOB_HANDOFF_INFO_TABLE *Phit = GetHobList ();
+    UINT64 Need = 2 * sizeof (EFI_HOB_MEMORY_ALLOCATION) + sizeof (EFI_HOB_GENERIC_HEADER);
+    if (Phit->EfiFreeMemoryTop < Phit->EfiFreeMemoryBottom ||
+        Phit->EfiFreeMemoryTop - Phit->EfiFreeMemoryBottom < Need)
+      return EFI_OUT_OF_RESOURCES;
+  }
+  BuildMemoryAllocationHob (Info->AdtPagesBase, Info->AdtPagesSize, EfiBootServicesData);
+  BuildMemoryAllocationHob (Info->BootArgsPagesBase, Info->BootArgsPagesSize, EfiBootServicesData);
+  Info->Flags = APPLE_ADT_INFO_RESERVED;
+  return EFI_SUCCESS;
+}
+
 //Borrowed from ArmPlatformPkg
 EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 UefiMemorySize)
 {
@@ -149,8 +225,9 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
   EFI_PHYSICAL_ADDRESS          ResourceTop;
   BOOLEAN                       Found;
 
-  // build up virtual memory map
-  BuildVirtualMemoryMap(&MemoryTable);
+  EFI_STATUS                    AdtStatus;
+
+  MemoryTable = NULL;
 
   // Ensure PcdSystemMemorySize has been set
   ASSERT (PcdGet64 (PcdSystemMemorySize) != 0);
@@ -280,7 +357,10 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
 
     AsciiSPrint(CpuNodeName, ARRAY_SIZE(CpuNodeName), "/cpus/cpu%d", i);
     dt_node_t *CpuNode = dt_get(CpuNodeName);
-    UINT32 *Carveout = (UINT32 *)dt_node_prop(CpuNode, "cpm-impl-reg", &CarveoutLength);
+    UINT32 *Carveout;
+    if (CpuNode == NULL) continue;
+    Carveout = (UINT32 *)dt_node_prop(CpuNode, "cpm-impl-reg", &CarveoutLength);
+    if (Carveout == NULL || CarveoutLength < 16 || Carveout[3] != 0 || Carveout[2] == 0) continue;
 
     ReserveMemoryRegion (
       ((UINT64)Carveout[1] << 32) | Carveout[0],
@@ -290,7 +370,11 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
 
 
 
-  // Build Memory Allocation Hob
+  // SystemMemory resources exist; reserve before ANY page-table allocation.
+  AdtStatus = ReserveAdtCopy (UefiMemoryBase, UefiMemorySize);
+  if (EFI_ERROR (AdtStatus)) return AdtStatus;
+  BuildVirtualMemoryMap (&MemoryTable);
+  if (MemoryTable == NULL) return EFI_OUT_OF_RESOURCES;
   InitMmu (MemoryTable);
 
   if (FeaturePcdGet (PcdPrePiProduceMemoryTypeInformationHob)) {

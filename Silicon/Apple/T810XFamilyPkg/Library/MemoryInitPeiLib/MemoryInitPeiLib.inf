@@ -37,6 +37,7 @@
   PrintLib
 
 [Guids]
+  gAppleSiliconPkgAdtInfoHobGuid
   gEfiMemoryTypeInformationGuid
 
 [FeaturePcd]

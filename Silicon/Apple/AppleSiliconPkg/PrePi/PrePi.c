@@ -35,6 +35,8 @@
 #include <Library/PrePiLib.h>
 #include <Library/SerialPortLib.h>
 #include <Guid/AppleFdInfoHob.h>
+#include <Guid/AppleAdtInfoHob.h>
+extern APPLE_ADT_INFO_HOB gAppleAdtInfo;
 
 UINT32 InitializeUART(VOID);
 
@@ -165,6 +167,11 @@ VOID Main(IN VOID *StackBase, IN UINTN StackSize, IN VOID *DeviceTreePtr, IN UIN
     MuCheckpoint(0x11);
 
     PrePeiSetHobList(HobList);
+
+    if (gAppleAdtInfo.Version == APPLE_ADT_INFO_VERSION) {
+        BuildGuidDataHob (&gAppleSiliconPkgAdtInfoHobGuid,
+                          &gAppleAdtInfo, sizeof (gAppleAdtInfo));
+    }
 
     //set up memory HOBs
     DEBUG((EFI_D_INFO | EFI_D_LOAD, "Invalidating data cache.\n"));

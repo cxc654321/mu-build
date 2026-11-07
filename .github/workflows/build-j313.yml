@@ -147,6 +147,11 @@ jobs:
         run: |
           python3 -B Tests/test_no_camera_holds.py
           python3 -B Tests/test_spihid_safe_entry.py
+          python3 -B Tests/test_j313_spi_transport.py
+          python3 -B Tests/test_j313_keyboard_adapter.py
+          python3 -B Tests/test_j313_board_resources.py
+          python3 -B Tests/test_j313_gui_diagnostics.py
+          python3 -B Tests/test_j313_bds_keyboard_connect.py
           python3 -B Tests/test_phase0_fb_marker.py
           python3 -B Tests/test_j313_sre_handoff.py
           python3 -B Tests/test_swm_boot_gate.py

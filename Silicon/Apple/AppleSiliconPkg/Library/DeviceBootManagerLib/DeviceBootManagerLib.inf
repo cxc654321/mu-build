@@ -67,6 +67,8 @@
   gDfciSettingsManagerVarNamespace
 
 [Protocols]
+  gEfiSimpleTextInProtocolGuid       ## CONSUMES
+  gEfiSimpleTextInputExProtocolGuid  ## CONSUMES
   gMsOSKProtocolGuid                ## CONSUMES
   gMsSWMProtocolGuid                ## CONSUMES
   gTpmPpProtocolGuid                ## CONSUMES

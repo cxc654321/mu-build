@@ -12,6 +12,8 @@ TEST = r"""
 #include <stdlib.h>
 #include <string.h>
 #include "AdtCopyPlan.h"
+#include <Guid/AppleAdtInfoHob.h>
+extern APPLE_ADT_INFO_HOB gAppleAdtInfo;
 #include <Library/PcdLib.h>
 BOOLEAN EarlySetup(VOID *, UINT64 *, UINT64 *, VOID *, VOID *);
 UINT64 MockFdBase, MockFbBase, MockFbSize;
@@ -62,6 +64,9 @@ int main(void) {
     assert(bootdest[sizes[0]] == 0xa5); // no largest-union overcopy
     assert(base == (UINTN)ram && size == 0x1000000);
     assert(MockFbBase == args->video.base && MockFbSize == 0x4000);
+    assert(gAppleAdtInfo.Version == 1 && gAppleAdtInfo.Flags == 0);
+    assert(gAppleAdtInfo.AdtBase == (UINTN)adtdest && gAppleAdtInfo.AdtSize == 0x2001);
+    assert(gAppleAdtInfo.AdtPagesSize == 0x3000 && gAppleAdtInfo.BootArgsPagesSize == 0x1000);
   }
   for(unsigned bad = 0; bad < 4; bad++) {
     UINT64 base = 0x1234, size = 0x5678;
@@ -72,6 +77,7 @@ int main(void) {
     if(bad == 3) args->devtree_size = 0;
     assert(!EarlySetup(args, &base, &size, bootdest, adtdest));
     assert(!copies && !checks && !MockFbBase && !MockFbSize);
+    assert(gAppleAdtInfo.Version == 0 && gAppleAdtInfo.AdtSize == 0);
     assert(base == 0x1234 && size == 0x5678 && bootdest[0] == 0xa5);
   }
   reset(2); check_result = -1;

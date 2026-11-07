@@ -1,28 +1,55 @@
 ## @file
-#  Phase0 safety placeholder, NOT a usable keyboard or pointer driver.
-#  Only fixed diagnostics; no board discovery, transport, or input publication.
-#  Previous source is quarantined as non-deployable reference under
-#  ../artifacts/spihid-quarantine-a26de9a; Linux GPL provenance awaits audit.
-#  This replacement does not relicense or validate the quarantined source.
+# J313-only SPI HID keyboard; GPL-2.0-only integration with MIT HID/queue.
+# See Core/COPYING, Core/LICENSE and provenance documents.
 ##
-
 [Defines]
-  INF_VERSION                    = 0x0001000c
-  BASE_NAME                      = AppleSpiHidDxe
-  FILE_GUID                      = 2c4f0b6e-61a8-4a2d-9f43-6e1a5c0d7b12
-  MODULE_TYPE                    = DXE_DRIVER
-  VERSION_STRING                 = 0.0
-  ENTRY_POINT                    = AppleSpiHidDxeInitialize
+  INF_VERSION = 0x0001000c
+  BASE_NAME = AppleSpiHidDxe
+  FILE_GUID = 2c4f0b6e-61a8-4a2d-9f43-6e1a5c0d7b12
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 0.1
+  ENTRY_POINT = AppleSpiHidDxeInitialize
+  UNLOAD_IMAGE = AppleSpiHidDxeUnload
 
 [Sources]
   AppleSpiHidDxe.c
+  J313SpiTransport.c
+  J313Keyboard.c
+  J313BoardResources.c
+  Core/spihid_protocol.c
+  Core/sh_init.c
+  Core/j313_spi_pio.c
+  Core/hid_keyboard.c
+  Core/key_queue.c
+  Core/j313_session.c
 
 [Packages]
   MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
 
 [LibraryClasses]
   UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  UefiBootManagerLib
+  DevicePathLib
+  MemoryAllocationLib
+  BaseMemoryLib
+  BaseLib
   DebugLib
+  TimerLib
+  IoLib
+  HobLib
+
+[Protocols]
+  gEfiLoadedImageProtocolGuid
+  gEfiSimpleTextInProtocolGuid
+  gEfiSimpleTextInputExProtocolGuid
+  gEfiDevicePathProtocolGuid
+
+[Guids]
+  gEfiEventExitBootServicesGuid
+  gAppleSiliconPkgAdtInfoHobGuid
 
 [Depex]
   TRUE

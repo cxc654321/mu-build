@@ -14,12 +14,15 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 #include <DfciSystemSettingTypes.h>
 
 #include <Guid/EventGroup.h>
+#include <Guid/J313Keyboard.h>
+#include <Protocol/SimpleTextIn.h>
 #include <Guid/GlobalVariable.h>
 #include <Guid/MsBootMenuGuid.h>
 #include <Guid/DfciPacketHeader.h>
 
 #include <Protocol/OnScreenKeyboard.h>
 #include <Protocol/SimpleWindowManager.h>
+#include <Protocol/SimpleTextInEx.h>
 #include <Protocol/TpmPpProtocol.h>
 
 #include <Library/BaseMemoryLib.h>
@@ -1022,6 +1025,56 @@ DumpConsoleVariable (
   Returns value from GetPlatformPreffered Console, which will be the handle and device path
   of the device console
 **/
+/** Retry binding only an already published board keyboard after DXE dispatch. */
+STATIC
+VOID
+ConnectPublishedJ313Keyboard (
+  VOID
+  )
+{
+  STATIC CONST EFI_GUID     KeyboardGuid = J313_KEYBOARD_DEVICE_PATH_GUID;
+  EFI_STATUS               Status;
+  EFI_HANDLE               *Handles;
+  UINTN                    Count;
+  UINTN                    Index;
+  EFI_DEVICE_PATH_PROTOCOL *Path;
+
+  if (EfiGetCurrentTpl () != TPL_APPLICATION) {
+    DEBUG ((DEBUG_ERROR, "[J313-BDS] KEYBOARD-CONNECT: skipped outside application TPL\n"));
+    return;
+  }
+
+  Handles = NULL;
+  Count = 0;
+  Status = gBS->LocateHandleBuffer (ByProtocol, &gEfiSimpleTextInProtocolGuid, NULL, &Count, &Handles);
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "[J313-BDS] KEYBOARD-LOOKUP: %r\n", Status));
+    return;
+  }
+
+  for (Index = 0; Index < Count; Index++) {
+    Path = DevicePathFromHandle (Handles[Index]);
+    if ((Path == NULL) ||
+        (DevicePathType (Path) != HARDWARE_DEVICE_PATH) ||
+        (DevicePathSubType (Path) != HW_VENDOR_DP) ||
+        (DevicePathNodeLength (Path) != sizeof (VENDOR_DEVICE_PATH)) ||
+        !CompareGuid (&((VENDOR_DEVICE_PATH *)Path)->Guid, &KeyboardGuid) ||
+        !IsDevicePathEnd (NextDevicePathNode (Path)) ||
+        (DevicePathNodeLength (NextDevicePathNode (Path)) != END_DEVICE_PATH_LENGTH)) {
+      continue;
+    }
+
+    Status = EfiBootManagerUpdateConsoleVariable (ConIn, Path, NULL);
+    DEBUG ((DEBUG_ERROR, "[J313-BDS] KEYBOARD-CONIN: %r\n", Status));
+    if (!EFI_ERROR (Status)) {
+      Status = gBS->ConnectController (Handles[Index], NULL, NULL, TRUE);
+      DEBUG ((DEBUG_ERROR, "[J313-BDS] KEYBOARD-CONNECT: %r\n", Status));
+    }
+  }
+
+  FreePool (Handles);
+}
+
 EFI_HANDLE
 EFIAPI
 DeviceBootManagerBeforeConsole (
@@ -1033,6 +1086,7 @@ DeviceBootManagerBeforeConsole (
     RemoveUsbKeyboardFromConIn ();
   }
 
+  ConnectPublishedJ313Keyboard ();
   MsBootOptionsLibRegisterDefaultBootOptions ();
   *PlatformConsoles = GetPlatformConsoleList ();
 
@@ -1247,6 +1301,32 @@ DeviceBootManagerPriorityBoot (
   return Status;
 }
 
+/** Observe UI protocols without connecting devices, reading keys, or changing gates. */
+STATIC
+VOID
+TraceGuiProtocols (
+  VOID
+  )
+{
+  EFI_STATUS  SwmStatus;
+  EFI_STATUS  OskStatus;
+  EFI_STATUS  InputStatus;
+  VOID        *Interface;
+
+  Interface = NULL;
+  SwmStatus = gBS->LocateProtocol (&gMsSWMProtocolGuid, NULL, &Interface);
+  Interface = NULL;
+  OskStatus = gBS->LocateProtocol (&gMsOSKProtocolGuid, NULL, &Interface);
+  InputStatus = EFI_NOT_FOUND;
+  if (gST->ConsoleInHandle != NULL) {
+    Interface = NULL;
+    InputStatus = gBS->HandleProtocol (gST->ConsoleInHandle, &gEfiSimpleTextInputExProtocolGuid, &Interface);
+  }
+
+  DEBUG ((DEBUG_ERROR, "[J313-BDS] GUI-PROTOCOLS: SWM=%r OSK=%r ConsoleIn=%p TextInEx=%r; physical input not verified\n",
+          SwmStatus, OskStatus, gST->ConsoleInHandle, InputStatus));
+}
+
 /**
  This is called from BDS right before going into front page
  when no bootable devices/options found
@@ -1296,8 +1376,10 @@ DeviceBootManagerUnableToBoot (
     return;
   }
 
+  TraceGuiProtocols ();
   DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-START: SWM available; input hardware not verified\n"));
   EfiBootManagerBoot (&BootManagerMenu);
+  DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-STATUS: %r\n", BootManagerMenu.Status));
   EfiBootManagerFreeLoadOption (&BootManagerMenu);
 
   //

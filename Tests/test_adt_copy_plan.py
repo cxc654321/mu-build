@@ -16,6 +16,7 @@ SHIM = r"""
 typedef uint64_t UINT64;
 typedef uint32_t UINT32;
 typedef uint16_t UINT16;
+typedef struct { uint32_t Data1; uint16_t Data2, Data3; uint8_t Data4[8]; } EFI_GUID;
 typedef uintptr_t UINTN;
 typedef void VOID;
 typedef bool BOOLEAN;
