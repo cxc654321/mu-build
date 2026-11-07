@@ -1,0 +1,29 @@
+name: j313-kboot-host
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, test/j313-swm-readiness-20261103]
+    paths:
+      - "Tools/pack_j313_kboot.py"
+      - "Tests/test_j313_kboot_pack.py"
+      - "Tests/test_j313_loader_payload.py"
+      - ".github/workflows/j313-kboot-host.yml"
+permissions:
+  contents: read
+jobs:
+  host:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout exact deployed loader source
+        uses: actions/checkout@v4
+        with:
+          repository: NT-for-ASi/m1n1_windows
+          ref: 69affa5a867a44cb281c6cf8716f5a38e3b0b063
+          path: loader-source
+          persist-credentials: false
+      - name: Test deterministic compressed packaging
+        run: python3 -B Tests/test_j313_kboot_pack.py
+      - name: Test real loader gzip and reservation path
+        run: python3 -B Tests/test_j313_loader_payload.py --m1n1-source "$GITHUB_WORKSPACE/loader-source"
