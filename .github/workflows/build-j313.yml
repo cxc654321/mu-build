@@ -161,6 +161,7 @@ jobs:
           python3 -B Tests/test_early_setup_fail_stop.py
           python3 -B Tests/test_adt_copy_plan.py
           python3 -B Tests/test_adt_early_setup.py
+          python3 -B Tests/test_j313_adt_reservation.py
           python3 -B Tests/test_fdf_fvmain_expansion.py
           SWM_SOURCE_TREE="$PWD" python3 -B Tests/test_swm_readiness.py
           python3 Tools/swm-readiness.py --tree "$PWD" --apply
