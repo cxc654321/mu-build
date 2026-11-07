@@ -228,7 +228,9 @@ AppleEmbeddedGpioControllerDxeInitialize(
   EFI_HANDLE GpioHandle;
   GPIO_CONTROLLER *GpioController;
   // UINTN NumberOfCpuDies;
-  UINT8 NumberOfGpioPins;
+  UINT32 NumberOfGpioPins;
+  CONST VOID *GpioPinsProperty;
+  size_t GpioPinsLength = 0;
   // INT32 PinCtrlApNodes[2];
   dt_node_t *PinCtrlApNode;
   UINT64 PinCtrlApReg;
@@ -263,7 +265,24 @@ AppleEmbeddedGpioControllerDxeInitialize(
       return EFI_NOT_FOUND;
     }
 
-    NumberOfGpioPins = dt_node_u32(PinCtrlApNode, "#gpio-pins", 0);
+    // #gpio-pins is exactly one native-endian ADT UINT32, not an array.
+    GpioPinsProperty = dt_node_prop(PinCtrlApNode, "#gpio-pins", &GpioPinsLength);
+    if (GpioPinsProperty == NULL) {
+      return EFI_NOT_FOUND;
+    }
+    if (GpioPinsLength != sizeof (NumberOfGpioPins)) {
+      return EFI_DEVICE_ERROR;
+    }
+    CopyMem (&NumberOfGpioPins, GpioPinsProperty, sizeof (NumberOfGpioPins));
+    if (NumberOfGpioPins == 0) {
+      return EFI_DEVICE_ERROR;
+    }
+
+    // dt_node_reg returns nonzero on failure and leaves the address untouched.
+    // Validate before allocating or publishing any controller state.
+    if (dt_node_reg(PinCtrlApNode, 0, &PinCtrlApReg, NULL) != 0) {
+      return EFI_DEVICE_ERROR;
+    }
   
     // 
     // Allocate the Platform GPIO controller struct
@@ -296,7 +315,6 @@ AppleEmbeddedGpioControllerDxeInitialize(
     GpioController = AppleSiliconPlatformGpioController->GpioController;
     DEBUG((DEBUG_INFO, "%a - setting GPIO controller index (local var)\n", __FUNCTION__));
     GpioController->GpioIndex = 0;
-    dt_node_reg(PinCtrlApNode, 0, &PinCtrlApReg, NULL);
     DEBUG((DEBUG_INFO, "%a - setting GPIO controller base reg (local var) to 0x%llx\n", __FUNCTION__, PinCtrlApReg));
     GpioController->RegisterBase = PinCtrlApReg;
     GpioController->InternalGpioCount = NumberOfGpioPins;
@@ -313,7 +331,9 @@ AppleEmbeddedGpioControllerDxeInitialize(
                     );
     if (EFI_ERROR (Status)) {
       DEBUG((DEBUG_ERROR, "%a - failed to install gEmbeddedGpioProtocolGuid, aborting\n", __FUNCTION__));
-      Status = EFI_OUT_OF_RESOURCES;
+      FreePool (AppleSiliconPlatformGpioController);
+      AppleSiliconPlatformGpioController = NULL;
+      return Status;
     }
   }
   DEBUG((DEBUG_INFO, "%a - GPIO protocol installation successful\n", __FUNCTION__));

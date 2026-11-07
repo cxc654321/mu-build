@@ -250,10 +250,17 @@ ASM_PFX(DiscoverDramFromDt):
   MOV64 (x4, FixedPcdGet64(PcdAdtPointer))
 
   bl    EarlySetup
-  cbz   x0, .Lout
+  cbz   x0, .LEarlySetupFailed
 
 .Lout:
   ret    x28
+
+.LEarlySetupFailed:
+  // Invalid early boot state must never return to the normal boot path.
+  msr    daifset, #0xf
+.LEarlySetupFailedWait:
+  wfe
+  b      .LEarlySetupFailedWait
 
 .LArm64LinuxMagic:
   .byte   0x41, 0x52, 0x4d, 0x64
