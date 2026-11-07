@@ -1301,6 +1301,32 @@ DeviceBootManagerPriorityBoot (
   return Status;
 }
 
+// User-requested photo/log diagnostic build. Define to 0 to remove all pauses.
+#ifndef J313_PHOTO_PAUSE_ENABLED
+#define J313_PHOTO_PAUSE_ENABLED  1
+#endif
+
+/** Bounded photo pause only at application TPL; never read keys or retry. */
+STATIC
+VOID
+J313PhotoPause (
+  IN CONST CHAR8  *Stage
+  )
+{
+#if J313_PHOTO_PAUSE_ENABLED
+  if (EfiGetCurrentTpl () != TPL_APPLICATION) {
+    DEBUG ((DEBUG_ERROR, "[J313-PHOTO] %a: skip 15-second pause at high TPL; continue\n", Stage));
+    return;
+  }
+
+  DEBUG ((DEBUG_ERROR, "[J313-PHOTO] %a: pause 15 seconds for photo/log capture\n", Stage));
+  gBS->Stall (15000000);
+  DEBUG ((DEBUG_ERROR, "[J313-PHOTO] %a: 15-second pause complete; continue\n", Stage));
+#else
+  (VOID)Stage;
+#endif
+}
+
 /** Observe UI protocols without connecting devices, reading keys, or changing gates. */
 STATIC
 VOID
@@ -1364,22 +1390,27 @@ DeviceBootManagerUnableToBoot (
   // Revisit if/when that lands.
   //
   DEBUG ((DEBUG_ERROR, "[J313-BDS] NO-BOOT-OPTION: waiting for SWM readiness\n"));
+  J313PhotoPause ("NO-BOOT-OPTION");
   Status = WaitForSwmReady ();
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "[J313-BDS] SWM-GATE-FAILED: %r; returning to BDS final halt, no retry\n", Status));
+    J313PhotoPause ("SWM-GATE-FAILED");
     return;
   }
 
   Status = MsBootOptionsLibGetBootManagerMenu (&BootManagerMenu, NULL);
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-NOT-FOUND: %r; returning to BDS final halt\n", Status));
+    J313PhotoPause ("MENU-NOT-FOUND");
     return;
   }
 
   TraceGuiProtocols ();
   DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-START: SWM available; input hardware not verified\n"));
+  J313PhotoPause ("MENU-START");
   EfiBootManagerBoot (&BootManagerMenu);
   DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-STATUS: %r\n", BootManagerMenu.Status));
+  J313PhotoPause ("MENU-STATUS");
   EfiBootManagerFreeLoadOption (&BootManagerMenu);
 
   //

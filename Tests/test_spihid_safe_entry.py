@@ -27,7 +27,9 @@ class SafeEntryTests(unittest.TestCase):
                           "-fsanitize=address,undefined", "-I", inc, "-I", inc / arch,
                           "-I", ROOT / "MU_BASECORE/MdeModulePkg/Include",
                           CORE / "test_entry.c", "-o", output])
-            self.assertIn("retained cleanup PASS", self.checked([output]))
+            result = self.checked([output])
+            self.assertIn("retained cleanup PASS", result)
+            self.assertIn("photo delay: each entry path, retained cleanup, live polling, high-TPL skip PASS", result)
 
     def test_production_aarch64_freestanding_compile(self):
         cc = shutil.which("clang")

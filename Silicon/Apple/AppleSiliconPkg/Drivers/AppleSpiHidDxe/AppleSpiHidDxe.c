@@ -19,6 +19,25 @@
 
 #define POLL_100NS 50000ULL
 #define BOOT_TICKS 1200U
+/* User-requested photo diagnostic build only; set to 0/remove to revoke.
+   Bounded ten seconds, no key input, new event, or permanent halt. */
+#define J313_PHOTO_DELAY_US 10000000
+
+STATIC VOID PhotoDelay (CONST CHAR8 *Stage)
+{
+  EFI_TPL OldTpl;
+  /* Probe only: restore before logging/stalling so timer polling can continue.
+     HIGH_LEVEL also permits safe detection when the caller is already elevated. */
+  OldTpl = gBS->RaiseTPL (TPL_HIGH_LEVEL);
+  gBS->RestoreTPL (OldTpl);
+  if (OldTpl != TPL_APPLICATION) {
+    DEBUG ((DEBUG_ERROR, "J313-PHOTO %a SKIP tpl=%u (not APPLICATION)\n", Stage, (UINT32)OldTpl));
+    return;
+  }
+  DEBUG ((DEBUG_ERROR, "J313-PHOTO %a WAIT us=%u (diagnostic only)\n", Stage, (UINT32)J313_PHOTO_DELAY_US));
+  if (J313_PHOTO_DELAY_US != 0) (VOID)gBS->Stall (J313_PHOTO_DELAY_US);
+  DEBUG ((DEBUG_ERROR, "J313-PHOTO %a CONTINUE\n", Stage));
+}
 
 typedef struct {
   J313_SPI_TRANSPORT Transport;
@@ -171,6 +190,7 @@ EFI_STATUS EFIAPI AppleSpiHidDxeInitialize (EFI_HANDLE ImageHandle, EFI_SYSTEM_T
   Status = J313BoardResourcesLoad (&Resources);
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "J313-SPI BOARD-FAIL %r\n", Status));
+    PhotoDelay ("BOARD-FAIL");
     return Status;
   }
   Status = gBS->HandleProtocol (ImageHandle, &gEfiLoadedImageProtocolGuid, (VOID **)&LoadedImage);
@@ -229,6 +249,7 @@ EFI_STATUS EFIAPI AppleSpiHidDxeInitialize (EFI_HANDLE ImageHandle, EFI_SYSTEM_T
   Status = gBS->SetTimer (C->Timer, TimerPeriodic, POLL_100NS);
   if (EFI_ERROR (Status)) goto Fail;
   DEBUG ((DEBUG_ERROR, "J313-SPI READY live-descriptor bytes=%u\n", (UINT32)C->Session.init.descriptor_length[0]));
+  PhotoDelay ("READY");
   return EFI_SUCCESS;
 Fail:
   DEBUG ((DEBUG_ERROR, "J313-SPI ENTRY-FAIL %r\n", Status));
@@ -237,7 +258,9 @@ Fail:
     /* Returning an entry error lets the loader free this image while events or
        protocols still reference it. Retain it, visibly failed, for safe unload. */
     DEBUG ((DEBUG_ERROR, "J313-SPI RETAIN-IMAGE cleanup=%r original=%r\n", Cleanup, Status));
-    return EFI_SUCCESS;
   }
+  /* Cleanup attempt is complete, including retained contexts; never pump here. */
+  PhotoDelay ("FAIL-CLEANUP");
+  if (EFI_ERROR (Cleanup)) return EFI_SUCCESS;
   return Status;
 }

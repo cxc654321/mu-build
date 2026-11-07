@@ -16,6 +16,8 @@ MOCK = r'''
 #include <stddef.h>
 #include <string.h>
 #define VOID void
+// Actual pause helper and call ordering are compiled in test_j313_photo_pause.py.
+static void J313PhotoPause(const char *stage) { (void)stage; }
 #define EFI_NOT_FOUND 14
 #define EFI_ERROR(s) ((s) != 0)
 #define DEBUG_ERROR 1
