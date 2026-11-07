@@ -48,10 +48,11 @@ int main(void) {
   assert(strstr(logs[1], "MENU-NOT-FOUND") && strstr(logs[1], "final halt"));
   gates=gets=boots=frees=nlogs=0; menu_status=0;
   DeviceBootManagerUnableToBoot();
-  assert(gates==1 && gets==1 && boots==1 && frees==1 && nlogs==5);
+  assert(gates==1 && gets==1 && boots==1 && frees==1 && nlogs==6);
   assert(strstr(logs[1], "MENU-START") && strstr(logs[2], "MENU-CALL"));
-  assert(strstr(logs[3], "MENU-STATUS"));
-  assert(strstr(logs[4], "MENU-RETURNED") && strstr(logs[4], "final halt"));
+  assert(strstr(logs[3], "MENU-CALL END"));
+  assert(strstr(logs[4], "MENU-STATUS"));
+  assert(strstr(logs[5], "MENU-RETURNED") && strstr(logs[5], "final halt"));
   return 0;
 }
 '''

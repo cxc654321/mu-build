@@ -68,6 +68,10 @@
   gDfciSettingsManagerVarNamespace
 
 [Protocols]
+  gEfiGraphicsOutputProtocolGuid    ## SOMETIMES_CONSUMES
+  gEfiHiiFontProtocolGuid           ## SOMETIMES_CONSUMES
+  gEfiFormBrowser2ProtocolGuid      ## SOMETIMES_CONSUMES
+  gEdkiiFormDisplayEngineProtocolGuid ## SOMETIMES_CONSUMES
   gEfiSimpleTextInProtocolGuid       ## CONSUMES
   gEfiSimpleTextInputExProtocolGuid  ## CONSUMES
   gMsOSKProtocolGuid                ## CONSUMES

@@ -23,6 +23,10 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 #include <Protocol/OnScreenKeyboard.h>
 #include <Protocol/SimpleWindowManager.h>
 #include <Protocol/SimpleTextInEx.h>
+#include <Protocol/GraphicsOutput.h>
+#include <Protocol/HiiFont.h>
+#include <Protocol/FormBrowser2.h>
+#include <Protocol/DisplayProtocol.h>
 #include <Protocol/TpmPpProtocol.h>
 
 #include <Library/BaseMemoryLib.h>
@@ -1355,23 +1359,94 @@ TraceGuiProtocols (
   VOID
   )
 {
-  EFI_STATUS  SwmStatus;
-  EFI_STATUS  OskStatus;
-  EFI_STATUS  InputStatus;
-  VOID        *Interface;
+  EFI_GUID  *Guids[] = {
+    &gEfiGraphicsOutputProtocolGuid, &gEfiHiiFontProtocolGuid,
+    &gMsSWMProtocolGuid, &gMsOSKProtocolGuid,
+    &gEfiFormBrowser2ProtocolGuid, &gEdkiiFormDisplayEngineProtocolGuid,
+    &gEfiSimpleTextInputExProtocolGuid
+  };
+  CONST CHAR8  *Names[] = { "GOP", "HII-Font", "SWM", "OSK", "FormBrowser2", "FormDisplayEngine", "TextInEx(ConsoleIn)" };
+  STATIC CONST EFI_GUID  KeyboardGuid = J313_KEYBOARD_DEVICE_PATH_GUID;
+  EFI_STATUS  Status;
+  VOID  *Interface;
+  CONST CHAR8  *Result;
+  EFI_GRAPHICS_OUTPUT_PROTOCOL  *Gop;
+  EFI_HANDLE  *Handles;
+  EFI_DEVICE_PATH_PROTOCOL  *Path;
+  UINTN  Count;
+  UINTN  Index;
+  UINT32  Width;
+  UINT32  Height;
+  BOOLEAN  Match;
 
-  Interface = NULL;
-  SwmStatus = gBS->LocateProtocol (&gMsSWMProtocolGuid, NULL, &Interface);
-  Interface = NULL;
-  OskStatus = gBS->LocateProtocol (&gMsOSKProtocolGuid, NULL, &Interface);
-  InputStatus = EFI_NOT_FOUND;
-  if (gST->ConsoleInHandle != NULL) {
+  // Observations only, not additional mandatory gates or proof of rendering.
+  // One lookup per item, no retries/waits. Synchronous boot services and debug
+  // output cannot be preempted by a timer; no fake timeout around these calls.
+  for (Index = 0; Index < sizeof (Guids) / sizeof (Guids[0]); Index++) {
+    DEBUG ((DEBUG_ERROR, "[J313-GUI-CHECK] %a BEGIN (single read-only lookup)\n", Names[Index]));
     Interface = NULL;
-    InputStatus = gBS->HandleProtocol (gST->ConsoleInHandle, &gEfiSimpleTextInputExProtocolGuid, &Interface);
+    if (Index == 6) {
+      Status = EFI_NOT_FOUND;
+      if (gST->ConsoleInHandle != NULL) {
+        Status = gBS->HandleProtocol (gST->ConsoleInHandle, Guids[Index], &Interface);
+      }
+    } else {
+      Status = gBS->LocateProtocol (Guids[Index], NULL, &Interface);
+    }
+
+    Result = (Status == EFI_NOT_FOUND) ? "MISSING" :
+             ((EFI_ERROR (Status) || (Interface == NULL)) ? "INVALID" : "PASS");
+    if (Index == 0) {
+      Width = 0;
+      Height = 0;
+      Gop = (EFI_GRAPHICS_OUTPUT_PROTOCOL *)Interface;
+      if (!EFI_ERROR (Status) && (Gop != NULL)) {
+        Result = "INVALID";
+        if ((Gop->Mode != NULL) && (Gop->Mode->Info != NULL) &&
+            (Gop->Mode->SizeOfInfo >= sizeof (EFI_GRAPHICS_OUTPUT_MODE_INFORMATION)) &&
+            (Gop->Mode->Mode < Gop->Mode->MaxMode)) {
+          Width = Gop->Mode->Info->HorizontalResolution;
+          Height = Gop->Mode->Info->VerticalResolution;
+          if ((Width != 0) && (Height != 0)) {
+            Result = "PASS";
+          }
+        }
+      }
+      DEBUG ((DEBUG_ERROR, "[J313-GUI] %a %a status=%r mode=%ux%u (current mode; no QueryMode/SetMode)\n", Names[Index], Result, Status, Width, Height));
+    } else {
+      DEBUG ((DEBUG_ERROR, "[J313-GUI] %a %a status=%r (publication only; virtual input is not physical input)\n", Names[Index], Result, Status));
+    }
   }
 
-  DEBUG ((DEBUG_ERROR, "[J313-BDS] GUI-PROTOCOLS: SWM=%r OSK=%r ConsoleIn=%p TextInEx=%r; physical input not verified\n",
-          SwmStatus, OskStatus, gST->ConsoleInHandle, InputStatus));
+  DEBUG ((DEBUG_ERROR, "[J313-GUI-CHECK] J313-keyboard-provider BEGIN (read-only enumeration)\n"));
+  // Match the board provider's complete vendor path, not the virtual splitter.
+  // Bounded to 64 published handles; truncation is INVALID, never false MISSING.
+  Handles = NULL;
+  Count = 0;
+  Match = FALSE;
+  Status = gBS->LocateHandleBuffer (ByProtocol, &gEfiSimpleTextInProtocolGuid, NULL, &Count, &Handles);
+  Result = (Status == EFI_NOT_FOUND) ? "MISSING" : "INVALID";
+  if (!EFI_ERROR (Status) && (Handles != NULL)) {
+    Result = (Count > 64) ? "INVALID" : "MISSING";
+    for (Index = 0; (Index < Count) && (Index < 64); Index++) {
+      Path = DevicePathFromHandle (Handles[Index]);
+      if ((Path != NULL) &&
+          (DevicePathType (Path) == HARDWARE_DEVICE_PATH) &&
+          (DevicePathSubType (Path) == HW_VENDOR_DP) &&
+          (DevicePathNodeLength (Path) == sizeof (VENDOR_DEVICE_PATH)) &&
+          CompareGuid (&((VENDOR_DEVICE_PATH *)Path)->Guid, &KeyboardGuid) &&
+          IsDevicePathEnd (NextDevicePathNode (Path)) &&
+          (DevicePathNodeLength (NextDevicePathNode (Path)) == END_DEVICE_PATH_LENGTH)) {
+        Match = TRUE;
+        Result = "PASS";
+        break;
+      }
+    }
+  }
+  DEBUG ((DEBUG_ERROR, "[J313-GUI] J313-keyboard-provider %a status=%r DevicePath-match=%u handles=%u scan-limit=64; key delivery not tested\n", Result, Status, Match, (UINT32)Count));
+  if (Handles != NULL) {
+    FreePool (Handles);
+  }
 }
 
 /**
@@ -1429,8 +1504,9 @@ DeviceBootManagerUnableToBoot (
   TraceGuiProtocols ();
   DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-START: SWM available; input hardware not verified\n"));
   J313PhotoPause ("MENU-START");
-  DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-CALL: invoking EfiBootManagerBoot after photo pause\n"));
+  DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-CALL BEGIN: invoking EfiBootManagerBoot after photo pause (synchronous, not preemptible)\n"));
   EfiBootManagerBoot (&BootManagerMenu);
+  DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-CALL END: EfiBootManagerBoot returned\n"));
   DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-STATUS: %r\n", BootManagerMenu.Status));
   J313PhotoPause ("MENU-STATUS");
   EfiBootManagerFreeLoadOption (&BootManagerMenu);

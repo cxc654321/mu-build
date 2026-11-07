@@ -50,6 +50,12 @@ typedef struct {
 #define APPLE_FB_GLYPH_H   19
 #define APPLE_FB_DEFAULT_SCALE  2
 
+// Experimental diagnostic stripe, not a GUI overlay or GOP mode change.
+// All modules retain logging, but may overwrite only the top 304 pixels.
+#ifndef APPLE_FB_DEBUG_STRIPE_HEIGHT
+#define APPLE_FB_DEBUG_STRIPE_HEIGHT  304
+#endif
+
 //
 /// Some panels hand the framebuffer back with the scanout running the other
 /// way: the log comes out mirror-imaged. A PCD rather than a guess, because the
@@ -176,6 +182,17 @@ FbFlush (
   IN UINTN  Length
   )
 {
+  UINTN  Limit;
+
+  if (!mFb.Ready) {
+    return;
+  }
+
+  Limit = mFb.StridePx * 4 * FB_CELL_H * mFb.Rows;
+  if ((Offset >= Limit) || (Length > Limit - Offset)) {
+    return;
+  }
+
   WriteBackDataCacheRange ((VOID *)((UINTN)mFb.Base + Offset), Length);
 }
 
@@ -187,6 +204,11 @@ FbPixel (
   IN UINT32  Color
   )
 {
+  if (!mFb.Ready || (X >= mFb.Width) || (X >= mFb.StridePx) ||
+      (Y >= FB_CELL_H * mFb.Rows)) {
+    return;
+  }
+
   if (mFb.Mirror) {
     X = mFb.Width - 1 - X;
   }
@@ -247,13 +269,22 @@ FbProbe (
     return;
   }
 
+  // Reject malformed geometry before any write or size multiplication.
+  if ((BootArgs->VideoStride % 4 != 0) ||
+      (BootArgs->VideoWidth > BootArgs->VideoStride / 4) ||
+      (BootArgs->VideoStride > (UINTN)-1 / BootArgs->VideoHeight) ||
+      (BootArgs->VideoBase > (UINTN)-1 - BootArgs->VideoStride * BootArgs->VideoHeight) ||
+      (APPLE_FB_DEBUG_STRIPE_HEIGHT < APPLE_FB_GLYPH_H * APPLE_FB_DEFAULT_SCALE)) {
+    return;
+  }
+
   mFb.Base     = (volatile UINT32 *)(UINTN)BootArgs->VideoBase;
   mFb.Width    = (UINTN)BootArgs->VideoWidth;
   mFb.Height   = (UINTN)BootArgs->VideoHeight;
   mFb.StridePx = (UINTN)(BootArgs->VideoStride / 4);
   mFb.Scale    = (mFb.Width >= 1280) ? APPLE_FB_DEFAULT_SCALE : 1;
   mFb.Cols     = mFb.Width / (APPLE_FB_GLYPH_W * mFb.Scale);
-  mFb.Rows     = mFb.Height / (APPLE_FB_GLYPH_H * mFb.Scale);
+  mFb.Rows     = MIN (mFb.Height, APPLE_FB_DEBUG_STRIPE_HEIGHT) / (APPLE_FB_GLYPH_H * mFb.Scale);
   mFb.CurX     = 0;
   mFb.CurY     = 0;
   mFb.Mirror   = FB_MIRROR_X;
@@ -268,7 +299,8 @@ FbProbe (
   FbFlush (0, mFb.StridePx * 4 * CellH * mFb.Rows);
 
   FbPuts ("#### APPLE FB DEBUG CONSOLE ####\n");
-  // Each module has its own probe state and clears the text area on first use.
+  // Each module has its own probe state; first use clears only the stripe.
+  // Logs can still obscure top-of-screen UI; this is not a composited overlay.
   // Repeat the build marker after every banner; this is not SPI entry evidence.
   FbPuts ("J313-P0-20261104-r1\n");
   FbPuts ("FB BASE 0x");

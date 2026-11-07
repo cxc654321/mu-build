@@ -167,11 +167,14 @@ jobs:
           python3 -B Tests/test_fdf_fvmain_expansion.py
           SWM_SOURCE_TREE="$PWD" python3 -B Tests/test_swm_readiness.py
           python3 Tools/swm-readiness.py --tree "$PWD" --apply
+          python3 -B Tests/test_apple_fb_debug_stripe.py
+          python3 -B Tests/test_j313_display_trace.py
           python3 -B Tests/test_j313_menu_trace.py
           python3 -B Tests/test_j313_conin_bypass.py
           python3 Tools/j313-menu-trace.py --tree "$PWD" --apply
           test "$DEVICE" = j313
           python3 Tools/j313-conin-bypass.py --tree "$PWD" --device "$DEVICE" --apply
+          python3 Tools/j313-display-trace.py --tree "$PWD" --apply
 
       - name: stuart_build
         id: build

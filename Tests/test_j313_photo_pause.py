@@ -54,7 +54,8 @@ static void record(int level, const char *fmt, ...) {
   else if (strstr(fmt, "SWM-GATE-FAILED")) event("SWM-GATE-FAILED");
   else if (strstr(fmt, "MENU-NOT-FOUND")) event("MENU-NOT-FOUND");
   else if (strstr(fmt, "MENU-START")) event("MENU-START");
-  else if (strstr(fmt, "MENU-CALL")) event("MENU-CALL");
+  else if (strstr(fmt, "MENU-CALL BEGIN")) event("MENU-CALL");
+  else if (strstr(fmt, "MENU-CALL END")) event("MENU-CALL-END");
   else if (strstr(fmt, "MENU-STATUS")) {
     assert(va_arg(ap, int) == 7); event("MENU-STATUS");
   } else if (strstr(fmt, "MENU-RETURNED")) event("MENU-RETURNED");
@@ -111,7 +112,7 @@ int main(void) {
         expect("MENU-NOT-FOUND"); expect_pause("MENU-NOT-FOUND");
       } else {
         expect("trace"); expect("MENU-START"); expect_pause("MENU-START");
-        expect("MENU-CALL"); expect("boot"); expect("MENU-STATUS"); expect_pause("MENU-STATUS");
+        expect("MENU-CALL"); expect("boot"); expect("MENU-CALL-END"); expect("MENU-STATUS"); expect_pause("MENU-STATUS");
         expect("free"); expect("MENU-RETURNED");
       }
     }
