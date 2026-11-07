@@ -28,7 +28,7 @@ typedef struct {
   /* Size is the supplied container span, not a claimed serialized tree size.
    * TreeComplete gates Consumed/TailSize/TailAllZero: only set after the
    * entire counted root tree passes structural checks. Empty tail is all zero.
-   * These are diagnostics only, never permission to discard trailing bytes. */
+   * Diagnostics do not change policy: Parse/ParseEx remain strict. */
   size_t Size;
   size_t Consumed;
   size_t TailSize;
@@ -36,6 +36,13 @@ typedef struct {
   uint32_t TailAllZero;
 } J313_ADT_DIAGNOSTIC;
 int J313BoardResourcesParseEx(const void *Blob, size_t Size,
+  J313_SPI_RESOURCES *Resources, J313_ADT_DIAGNOSTIC *Diagnostic);
+/* EXPERIMENTAL container policy: fully validate the first counted root, then
+ * ignore arbitrary trailing bytes (including a second tree). All identity,
+ * address and resource checks still apply exclusively to that first root.
+ * No mapping expansion; caller must retain reservation of the full Size span.
+ * Same output/diagnostic ABI and failure guarantees as ParseEx. */
+int J313BoardResourcesParseContainer(const void *Blob, size_t Size,
   J313_SPI_RESOURCES *Resources, J313_ADT_DIAGNOSTIC *Diagnostic);
 #ifndef J313_HOST_TEST
 #include <Uefi.h>

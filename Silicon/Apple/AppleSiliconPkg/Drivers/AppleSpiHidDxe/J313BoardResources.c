@@ -104,11 +104,12 @@ static radt_status fail(radt_workspace *w, radt_status status, uint32_t reason,
     }
     return status;
 }
-radt_status radt_validate(const void *buffer, size_t size, radt_workspace *w)
+static radt_status validate_root(const void *buffer, size_t size, radt_workspace *w, int ignore_tail)
 {
     const unsigned char *b = buffer;
     struct { size_t index; uint32_t left; } stack[RADT_DEPTH];
     size_t depth = 0, off = 0;
+    radt_status result = RADT_OK;
 #define BAD(status, reason, at, node, key) fail(w, status, reason, at, node, b, size, key)
     if (!w) return RADT_ARGUMENT;
     w->node_count = w->prop_count = 0;
@@ -179,11 +180,12 @@ radt_status radt_validate(const void *buffer, size_t size, radt_workspace *w)
      * consumed length. This is a copied container span, not proof of an exact
      * tree length. m1n1 ADTNodeStruct is count-delimited with per-property
      * 4-byte alignment; it specifies no whole-container tail padding rule.
-     * Do not guess zero padding or silently truncate this span. Retain strict
-     * rejection until the loader supplies an independently established tree
-     * length/contract. Reservation must continue covering the entire copy. */
-    if (off != size)
-        BAD(RADT_FORMAT, J313_ADT_TRAILING_BYTES, off, SIZE_MAX, SIZE_MAX);
+     * Strict callers reject any tail. The explicit experimental container
+     * caller ignores it only after this entire counted root validates. Never
+     * parse a second root or expand any mapping; reserve the entire HOB copy.
+     * Record failure before filling span: fail() clears the diagnostic. */
+    if (off != size && !ignore_tail)
+        result = BAD(RADT_FORMAT, J313_ADT_TRAILING_BYTES, off, SIZE_MAX, SIZE_MAX);
     if (w->diagnostic) {
         size_t i;
         J313_ADT_DIAGNOSTIC *d = w->diagnostic;
@@ -194,9 +196,12 @@ radt_status radt_validate(const void *buffer, size_t size, radt_workspace *w)
         for (i = off; i < size; ++i)
             if (b[i]) d->TailAllZero = 0;
     }
-    if (off != size) return RADT_FORMAT;
 #undef BAD
-    return RADT_OK;
+    return result;
+}
+radt_status radt_validate(const void *buffer, size_t size, radt_workspace *w)
+{
+    return validate_root(buffer, size, w, 0);
 }
 static const radt_property *prop(const unsigned char *b,
     const radt_workspace *w, size_t node, const char *key)
@@ -314,12 +319,12 @@ static int gates(struct power_walk *w,const char *path) {
  }
  return 1;
 }
-static int ParseResources(const void *blob,size_t size,J313_SPI_RESOURCES *out, radt_workspace workspace) {
+static int ParseResources(const void *blob,size_t size,J313_SPI_RESOURCES *out, radt_workspace workspace, int ignore_tail) {
  const unsigned char *b=blob; const radt_property *p; J313_SPI_RESOURCES r;
  struct power_walk walk; size_t n;
  if(!out) return 1;
  memset(out,0,sizeof(*out)); memset(&r,0,sizeof(r));
- if(radt_validate(blob,size,&workspace)!=RADT_OK) return 1;
+ if(validate_root(blob,size,&workspace,ignore_tail)!=RADT_OK) return 1;
  p=get(b,&workspace,"/","target-type");
  if(!p || p->size!=5 || memcmp(b+p->data,"j313",5)) return 2;
  p=get(b,&workspace,"/chosen","chip-id");
@@ -348,8 +353,8 @@ static int ParseResources(const void *blob,size_t size,J313_SPI_RESOURCES *out, 
  memcpy(r.TargetType,"j313",5); r.ChipId=0x8103; r.ClockGate=0x34;
  *out=r; return 0;
 }
-int J313BoardResourcesParseEx(const void *blob,size_t size,J313_SPI_RESOURCES *out,
- J313_ADT_DIAGNOSTIC *diagnostic) {
+static int ParseWithPolicy(const void *blob,size_t size,J313_SPI_RESOURCES *out,
+ J313_ADT_DIAGNOSTIC *diagnostic, int ignore_tail) {
  radt_workspace w; int result;
  memset(&w,0,sizeof(w)); w.diagnostic=diagnostic;
  if(diagnostic) { memset(diagnostic,0,sizeof(*diagnostic)); diagnostic->NodeIndex=SIZE_MAX; diagnostic->Size=size; }
@@ -365,9 +370,17 @@ int J313BoardResourcesParseEx(const void *blob,size_t size,J313_SPI_RESOURCES *o
  w.nodes=BoardAllocate(w.node_capacity*sizeof(*w.nodes));
  w.props=BoardAllocate(w.prop_capacity*sizeof(*w.props));
  if(!w.nodes || !w.props) { fail(&w,RADT_BUDGET,J313_ADT_ALLOCATION,0,SIZE_MAX,NULL,size,SIZE_MAX); if(w.nodes) BoardFree(w.nodes); if(w.props) BoardFree(w.props); return 5; }
- result=ParseResources(blob,size,out,w);
+ result=ParseResources(blob,size,out,w,ignore_tail);
  BoardFree(w.props); BoardFree(w.nodes);
  return result;
+}
+int J313BoardResourcesParseEx(const void *blob,size_t size,J313_SPI_RESOURCES *out,
+ J313_ADT_DIAGNOSTIC *diagnostic) {
+ return ParseWithPolicy(blob,size,out,diagnostic,0);
+}
+int J313BoardResourcesParseContainer(const void *blob,size_t size,J313_SPI_RESOURCES *out,
+ J313_ADT_DIAGNOSTIC *diagnostic) {
+ return ParseWithPolicy(blob,size,out,diagnostic,1);
 }
 int J313BoardResourcesParse(const void *blob,size_t size,J313_SPI_RESOURCES *out) {
  return J313BoardResourcesParseEx(blob,size,out,NULL);
@@ -387,8 +400,11 @@ EFI_STATUS J313BoardResourcesLoad(J313_SPI_RESOURCES *Resources) {
     Info->AdtBase-Info->AdtPagesBase>Info->AdtPagesSize-Info->AdtSize) return EFI_COMPROMISED_DATA;
  Copy=AllocateCopyPool((UINTN)Info->AdtSize,(VOID *)(UINTN)Info->AdtBase);
  if(Copy==NULL) return EFI_OUT_OF_RESOURCES;
- Result=J313BoardResourcesParseEx(Copy,(UINTN)Info->AdtSize,Resources,&Diagnostic);
+ /* EXPERIMENTAL: retain the full reserved HOB span, ignore only root tail. */
+ Result=J313BoardResourcesParseContainer(Copy,(UINTN)Info->AdtSize,Resources,&Diagnostic);
  FreePool(Copy);
+ if(Diagnostic.TreeComplete) DEBUG((DEBUG_ERROR,"J313 ADT EXPERIMENTAL TAIL-IGNORED size=%Lu consumed=%Lu tail=%Lu zero=%u\n",
+  (UINT64)Diagnostic.Size,(UINT64)Diagnostic.Consumed,(UINT64)Diagnostic.TailSize,Diagnostic.TailAllZero));
  DEBUG((DEBUG_ERROR,"J313 ADT span size=%Lu consumed=%Lu tail=%Lu tree_complete=%u tail_all_zero=%a\n",
   (UINT64)Diagnostic.Size,(UINT64)Diagnostic.Consumed,(UINT64)Diagnostic.TailSize,
   Diagnostic.TreeComplete,!Diagnostic.TreeComplete?"unknown":(Diagnostic.TailAllZero?"yes":"no")));

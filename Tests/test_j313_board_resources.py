@@ -147,8 +147,10 @@ class TestDiagnostic(TestBoard):
 import ctypes as C, mmap, sys
 sys.path.insert(0,sys.argv[1])
 from test_j313_board_resources import fixture, Resources, Diagnostic
-lib=C.CDLL(sys.argv[2]);f=lib.J313BoardResourcesParseEx
+lib=C.CDLL(sys.argv[2])
+f=getattr(lib,sys.argv[3])
 f.argtypes=[C.c_void_p,C.c_size_t,C.POINTER(Resources),C.POINTER(Diagnostic)]
+container=sys.argv[3].endswith('Container')
 page=mmap.PAGESIZE;m=mmap.mmap(-1,page*2,prot=mmap.PROT_READ|mmap.PROT_WRITE)
 addr=C.addressof(C.c_char.from_buffer(m));syslib=C.CDLL(None)
 syslib.mprotect.argtypes=[C.c_void_p,C.c_size_t,C.c_int]
@@ -160,7 +162,8 @@ cases += [b+b'\0',b+b'\xff',b+b'\0'*(page-len(b)),b+b'\0'*(page-len(b)-1)+b'\x01
 for data in cases:
     p=addr+page-len(data);C.memmove(p,data,len(data));r=Resources();d=Diagnostic()
     result=f(p,len(data),C.byref(r),C.byref(d))
-    assert result==0 if data==b else result!=0
+    success=(data==b or (container and data.startswith(b)))
+    assert (result==0)==success
     assert d.size==len(data)
     if len(data)>=len(b) and data[:len(b)]==b:
         assert (d.consumed,d.tail_size,d.tree_complete,d.tail_all_zero)==(len(b),len(data)-len(b),1,int(not any(data[len(b):])))
@@ -169,6 +172,66 @@ for data in cases:
     assert bytes(r)==bytes(C.sizeof(r)) if result else True
 assert syslib.mprotect(addr+page,page,mmap.PROT_READ|mmap.PROT_WRITE)==0
 '''
-        subprocess.run([sys.executable,'-c',script,str(ROOT/'Tests'),str(pathlib.Path(self.tmp.name)/'board.so')],check=True)
+        for name in ['J313BoardResourcesParseEx','J313BoardResourcesParseContainer']:
+            subprocess.run([sys.executable,'-c',script,str(ROOT/'Tests'),str(pathlib.Path(self.tmp.name)/'board.so'),name],check=True)
+
+class TestContainer(TestBoard):
+    def container(self,b):
+        f=self.lib.J313BoardResourcesParseContainer
+        f.argtypes=[C.c_void_p,C.c_size_t,C.POINTER(Resources),C.POINTER(Diagnostic)]
+        f.restype=C.c_int
+        data=C.create_string_buffer(b);r=Resources();d=Diagnostic()
+        C.memset(C.byref(r),0xa5,C.sizeof(r));C.memset(C.byref(d),0xa5,C.sizeof(d))
+        status=f(data,len(b),C.byref(r),C.byref(d))
+        if status:self.assertEqual(bytes(r),bytes(C.sizeof(r)))
+        return status,r,d
+
+    def test_arbitrary_tail_first_root_only(self):
+        b=fixture();expected=bytes(self.check(b,True))
+        for tail in [b'',b'\0',b'\0'*4096,b'\xff',b'\0'*4095+b'\x01',fixture(target=b'j314\0'),fixture(True)]:
+            with self.subTest(tail=len(tail)):
+                status,r,d=self.container(b+tail)
+                self.assertEqual(status,0);self.assertEqual(bytes(r),expected)
+                self.assertEqual((d.reason,d.offset,d.node,d.key),(0,len(b),C.c_size_t(-1).value,b''))
+                self.assertEqual((d.size,d.consumed,d.tail_size,d.tree_complete,d.tail_all_zero),
+                                 (len(b+tail),len(b),len(tail),1,int(not any(tail))))
+                self.check(b+tail,not tail)
+
+    def test_incomplete_first_root_rejected(self):
+        b=fixture()
+        for n in range(len(b)):
+            status,r,d=self.container(b[:n])
+            self.assertEqual(status,1)
+            self.assertEqual((d.consumed,d.tail_size,d.tree_complete,d.tail_all_zero),(0,0,0,0))
+        # Declared last property value exceeds even appended candidate root.
+        at=b.index(prop('ps-regs',struct.pack('<IIIIII',0,0,0,1,0,0)))
+        bad=b[:at+32]+u32(0x7fffffff)+b[at+36:]+b
+        status,r,d=self.container(bad)
+        self.assertEqual((status,d.reason,d.tree_complete),(1,11,0))
+
+    def test_tail_cannot_replace_identity_or_resources(self):
+        good=fixture()
+        for bad,code in [(fixture(target=b'j314\0'),2),
+                         (good.replace(u32(0x8103),u32(0x8104),1),2),
+                         (good.replace(reg(0x3510c000,0x4000),reg(0x35110000,0x4000),1),3),
+                         (good.replace(reg(0x3c100000,0x4000),reg(0x3c100000,0x100004),1),3),
+                         (fixture(True),4)]:
+            status,r,d=self.container(bad+good)
+            self.assertEqual(status,code)
+            self.assertEqual((d.reason,d.consumed,d.tree_complete),(0,len(bad),1))
+
+    def test_legacy_abi_and_optional_diagnostic(self):
+        # Existing symbols and struct layout are unchanged; guards detect writes past ABI.
+        class Guard(C.Structure):
+            _fields_=[('d',Diagnostic),('guard',C.c_ubyte*32)]
+        b=fixture();data=C.create_string_buffer(b+b'\xff');r=Resources()
+        for name in ['J313BoardResourcesParseEx','J313BoardResourcesParseContainer']:
+            f=getattr(self.lib,name)
+            f.argtypes=[C.c_void_p,C.c_size_t,C.POINTER(Resources),C.POINTER(Diagnostic)]
+            g=Guard();C.memset(C.byref(g),0xa5,C.sizeof(g))
+            self.assertEqual(f(data,len(b),C.byref(r),C.byref(g.d)),0)
+            self.assertEqual(bytes(g.guard),b'\xa5'*32)
+            self.assertEqual(f(data,len(b)+1,C.byref(r),None),int(name.endswith('Ex')))
+        self.check(b,True)
 
 if __name__=='__main__': unittest.main()
