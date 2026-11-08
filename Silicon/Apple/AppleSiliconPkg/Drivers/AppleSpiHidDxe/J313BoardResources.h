@@ -63,6 +63,8 @@ int J313BoardResourcesParseExperimentalIdentityBypass(const void *Blob, size_t S
   J313_SPI_RESOURCES *Resources, J313_ADT_DIAGNOSTIC *Diagnostic, uint32_t *IdentityMask);
 #ifndef J313_HOST_TEST
 #include <Uefi.h>
+#include <Guid/J313BootDiagnostic.h>
+EFI_STATUS J313BoardResourcesLoadEx(J313_SPI_RESOURCES *Resources, J313_BOOT_DIAGNOSTIC *Snapshot);
 EFI_STATUS J313BoardResourcesLoad(J313_SPI_RESOURCES *Resources);
 #endif
 #endif

@@ -56,6 +56,39 @@ typedef struct {
   hk_result Keys;
 } J313_CONTEXT;
 STATIC J313_CONTEXT *mContext;
+STATIC J313_BOOT_DIAGNOSTIC *mDiagnostic;
+STATIC BOOLEAN mDiagnosticAttempted;
+
+STATIC VOID DiagnosticCreate (VOID)
+{
+  EFI_GUID Guid = J313_BOOT_DIAGNOSTIC_GUID;
+  EFI_TPL OldTpl;
+  J313_BOOT_DIAGNOSTIC *D;
+  OldTpl = gBS->RaiseTPL (TPL_HIGH_LEVEL);
+  gBS->RestoreTPL (OldTpl);
+  if (OldTpl != TPL_APPLICATION || mDiagnosticAttempted) return;
+  mDiagnosticAttempted = TRUE;
+  if (EFI_ERROR (gBS->AllocatePool (EfiBootServicesData, sizeof (*D), (VOID **)&D))) return;
+  *D = (J313_BOOT_DIAGNOSTIC){0};
+  D->Version = J313_DIAG_VERSION; D->Size = sizeof (*D);
+  D->Stage = J313StageEntry;
+  if (EFI_ERROR (gBS->InstallConfigurationTable (&Guid, D))) { FreePool (D); return; }
+  /* Intentionally retained boot-lifetime allocation; OS reclaims after EBS.
+     A reloaded image may replace the table, retaining the old small allocation. */
+  mDiagnostic = D;
+}
+
+STATIC EFI_STATUS DiagnosticStatus (UINT32 Stage, EFI_STATUS Status)
+{
+  if (mDiagnostic != NULL) {
+    mDiagnostic->Stage = Stage; mDiagnostic->Status = (UINT64)Status;
+    if (EFI_ERROR (Status)) {
+      mDiagnostic->LastFailureStage = Stage;
+      mDiagnostic->LastFailureStatus = (UINT64)Status;
+    }
+  }
+  return Status;
+}
 
 STATIC UINT64 NowMs (VOID)
 {
@@ -75,7 +108,7 @@ STATIC VOID Stop (J313_CONTEXT *C)
 STATIC int Pump (J313_CONTEXT *C)
 {
   J313_SPI_STATUS Bus;
-  EFI_STATUS Status;
+  EFI_STATUS Status = EFI_DEVICE_ERROR;
   bool Ready;
   int Result;
   if (C->Stopped) return JS_ERROR;
@@ -114,6 +147,7 @@ STATIC int Pump (J313_CONTEXT *C)
 BusFailed:
   DEBUG ((DEBUG_ERROR, "J313-SPI BUS-FAIL status=%u\n", (UINT32)Bus));
 Failed:
+  DiagnosticStatus (J313StagePump, Status);
   DEBUG ((DEBUG_ERROR, "J313-SPI STOP phase=%u detail=%d\n", (UINT32)C->Session.init.phase, C->Session.detail));
   Stop (C);
   return JS_ERROR;
@@ -186,29 +220,37 @@ EFI_STATUS EFIAPI AppleSpiHidDxeInitialize (EFI_HANDLE ImageHandle, EFI_SYSTEM_T
   int Result = JS_WAIT;
   (VOID)SystemTable;
   DEBUG ((DEBUG_ERROR, "J313-SPI ENTRY real-path unverified-hardware\n"));
-  if (mContext != NULL) return EFI_ALREADY_STARTED;
-  Status = J313BoardResourcesLoad (&Resources);
+  DiagnosticCreate ();
+  if (mContext != NULL) return DiagnosticStatus (J313StageAlreadyStarted, EFI_ALREADY_STARTED);
+  Status = J313BoardResourcesLoadEx (&Resources, mDiagnostic);
+  DiagnosticStatus (J313StageBoard, Status);
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "J313-SPI BOARD-FAIL %r\n", Status));
     PhotoDelay ("BOARD-FAIL");
     return Status;
   }
   Status = gBS->HandleProtocol (ImageHandle, &gEfiLoadedImageProtocolGuid, (VOID **)&LoadedImage);
+  DiagnosticStatus (J313StageLoadedImage, Status);
   if (EFI_ERROR (Status)) return Status;
   C = AllocateZeroPool (sizeof (*C));
-  if (C == NULL) return EFI_OUT_OF_RESOURCES;
+  if (C == NULL) return DiagnosticStatus (J313StageContext, EFI_OUT_OF_RESOURCES);
   mContext = C;
   LoadedImage->Unload = AppleSpiHidDxeUnload;
   Status = J313KeyboardCreate (&C->Keyboard);
+  DiagnosticStatus (J313StageKeyboard, Status);
   if (EFI_ERROR (Status)) goto Fail;
   Status = gBS->CreateEventEx (EVT_NOTIFY_SIGNAL, TPL_NOTIFY, ExitBootServices,
                               C, &gEfiEventExitBootServicesGuid, &C->ExitEvent);
+  DiagnosticStatus (J313StageExitEvent, Status);
   if (EFI_ERROR (Status)) goto Fail;
   /* Waitable timer permits firmware event dispatch between bounded packets;
      Publish must run at APPLICATION, never from a timer notification. */
   Status = gBS->CreateEvent (EVT_TIMER, TPL_APPLICATION, NULL, NULL, &C->Timer);
+  DiagnosticStatus (J313StageBootTimer, Status);
   if (EFI_ERROR (Status)) goto Fail;
   Bus = J313SpiTransportInit (&C->Transport, &Resources, NULL);
+  if (mDiagnostic != NULL) { mDiagnostic->BusCode = (UINT32)Bus; mDiagnostic->Valid |= J313_DIAG_BUS_VALID; }
+  DiagnosticStatus (J313StageSpiInit, Bus == J313_SPI_OK ? EFI_SUCCESS : EFI_DEVICE_ERROR);
   if (Bus != J313_SPI_OK) {
     DEBUG ((DEBUG_ERROR, "J313-SPI INIT-FAIL status=%u\n", (UINT32)Bus));
     Status = EFI_DEVICE_ERROR; goto Fail;
@@ -216,44 +258,56 @@ EFI_STATUS EFIAPI AppleSpiHidDxeInitialize (EFI_HANDLE ImageHandle, EFI_SYSTEM_T
   Started = NowMs ();
   js_start (&C->Session, Started);
   Status = gBS->SetTimer (C->Timer, TimerPeriodic, POLL_100NS);
+  DiagnosticStatus (J313StageStartTimer, Status);
   if (EFI_ERROR (Status)) goto Fail;
   for (Tick = 0; Tick < BOOT_TICKS; ++Tick) {
     Status = gBS->WaitForEvent (1, &C->Timer, &Index);
+  DiagnosticStatus (J313StageWait, Status);
     if (EFI_ERROR (Status)) goto Fail;
     Now = NowMs ();
-    if (Now < Started || Now - Started >= 6000) { Status = EFI_TIMEOUT; goto Fail; }
+    if (Now < Started || Now - Started >= 6000) { Status = DiagnosticStatus (J313StageTimeout, EFI_TIMEOUT); goto Fail; }
     Result = Pump (C);
     if (Result == JS_PUBLISH || Result == JS_ERROR) break;
   }
-  if (Result != JS_PUBLISH) { Status = EFI_DEVICE_ERROR; goto Fail; }
+  if (Result != JS_PUBLISH) { Status = DiagnosticStatus (J313StageHandshake, EFI_DEVICE_ERROR); goto Fail; }
   Status = gBS->SetTimer (C->Timer, TimerCancel, 0);
+  DiagnosticStatus (J313StageCancelTimer, Status);
   if (EFI_ERROR (Status)) goto Fail;
   Status = gBS->CloseEvent (C->Timer);
+  DiagnosticStatus (J313StageCloseTimer, Status);
   if (EFI_ERROR (Status)) goto Fail;
   C->Timer = NULL;
   Status = J313KeyboardPublish (C->Keyboard);
+  DiagnosticStatus (J313StagePublish, Status);
   if (EFI_ERROR (Status)) goto Fail;
   C->Published = TRUE;
   KeyboardHandle = J313KeyboardHandle (C->Keyboard);
   KeyboardPath = DevicePathFromHandle (KeyboardHandle);
   if (KeyboardPath == NULL) {
+    DiagnosticStatus (J313StageConsolePath, EFI_NOT_FOUND);
     DEBUG ((DEBUG_ERROR, "J313-SPI CONSOLE-NO-PATH\n"));
   } else {
     Status = EfiBootManagerUpdateConsoleVariable (ConIn, KeyboardPath, NULL);
+  DiagnosticStatus (J313StageConIn, Status);
     DEBUG ((EFI_ERROR (Status) ? DEBUG_ERROR : DEBUG_INFO, "J313-SPI CONIN %r\n", Status));
     Status = gBS->ConnectController (KeyboardHandle, NULL, NULL, TRUE);
+  DiagnosticStatus (J313StageConnect, Status);
     DEBUG ((EFI_ERROR (Status) ? DEBUG_ERROR : DEBUG_INFO, "J313-SPI CONNECT %r\n", Status));
   }
   Status = gBS->CreateEvent (EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_NOTIFY, Poll, C, &C->Timer);
+  DiagnosticStatus (J313StagePollEvent, Status);
   if (EFI_ERROR (Status)) goto Fail;
   Status = gBS->SetTimer (C->Timer, TimerPeriodic, POLL_100NS);
+  DiagnosticStatus (J313StagePollTimer, Status);
   if (EFI_ERROR (Status)) goto Fail;
   DEBUG ((DEBUG_ERROR, "J313-SPI READY live-descriptor bytes=%u\n", (UINT32)C->Session.init.descriptor_length[0]));
+  DiagnosticStatus (J313StageReady, EFI_SUCCESS);
   PhotoDelay ("READY");
   return EFI_SUCCESS;
 Fail:
   DEBUG ((DEBUG_ERROR, "J313-SPI ENTRY-FAIL %r\n", Status));
   Cleanup = AppleSpiHidDxeUnload (ImageHandle);
+  if (mDiagnostic != NULL) { mDiagnostic->CleanupStatus = (UINT64)Cleanup; mDiagnostic->Valid |= J313_DIAG_CLEANUP_VALID; }
   if (EFI_ERROR (Cleanup)) {
     /* Returning an entry error lets the loader free this image while events or
        protocols still reference it. Retain it, visibly failed, for safe unload. */

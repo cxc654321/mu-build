@@ -153,6 +153,7 @@ jobs:
           python3 -B Tests/test_j313_board_resources.py
           python3 -B Tests/test_j313_gui_diagnostics.py
           python3 -B Tests/test_j313_photo_pause.py
+          python3 -B Tests/test_j313_snapshot_summary.py
           python3 -B Tests/test_j313_bds_keyboard_connect.py
           python3 -B Tests/test_phase0_fb_marker.py
           python3 -B Tests/test_j313_sre_handoff.py

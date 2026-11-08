@@ -1332,6 +1332,8 @@ DeviceBootManagerPriorityBoot (
 #endif
 
 /** Requested photo pause at application TPL; Stall/callback hangs are not bounded. */
+VOID J313DiagnosticSummary (VOID);
+
 STATIC
 VOID
 J313PhotoPause (
@@ -1504,6 +1506,7 @@ DeviceBootManagerUnableToBoot (
   TraceGuiProtocols ();
   DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-START: SWM available; input hardware not verified\n"));
   J313PhotoPause ("MENU-START");
+  J313DiagnosticSummary ();
   DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-CALL BEGIN: invoking EfiBootManagerBoot after photo pause (synchronous, not preemptible)\n"));
   EfiBootManagerBoot (&BootManagerMenu);
   DEBUG ((DEBUG_ERROR, "[J313-BDS] MENU-CALL END: EfiBootManagerBoot returned\n"));

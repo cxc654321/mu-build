@@ -162,7 +162,7 @@ class GuiDiagnosticsTests(unittest.TestCase):
     def test_actual_production_bodies(self):
         with tempfile.TemporaryDirectory(prefix="j313-gui-") as tmp:
             src, exe = Path(tmp) / "gui.c", Path(tmp) / "gui"
-            src.write_text(MOCK + TRACE + UNABLE + MAIN)
+            src.write_text(MOCK + "\nvoid J313DiagnosticSummary(void) {}\n" + TRACE + UNABLE + MAIN)
             subprocess.run(shlex.split(os.environ.get("CC", "cc")) +
                            ["-std=c11", "-Wall", "-Wextra", "-Werror", str(src), "-o", str(exe)], check=True)
             subprocess.run([str(exe)], check=True, timeout=5)

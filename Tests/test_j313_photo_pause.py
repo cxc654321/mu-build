@@ -135,7 +135,7 @@ class PhotoPauseTests(unittest.TestCase):
     def test_actual_helper_and_callback_enabled_and_disabled(self):
         with tempfile.TemporaryDirectory(prefix="j313-photo-") as tmp:
             src, exe = Path(tmp) / "photo.c", Path(tmp) / "photo"
-            src.write_text(MOCK + HELPER + BODY + MAIN)
+            src.write_text(MOCK + "\nvoid J313DiagnosticSummary(void) {}\n" + HELPER + BODY + MAIN)
             for flags in ([], ["-DJ313_PHOTO_PAUSE_ENABLED=0"]):
                 with self.subTest(flags=flags):
                     subprocess.run(shlex.split(os.environ.get("CC", "cc")) +

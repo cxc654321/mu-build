@@ -62,7 +62,7 @@ class BootDiagnosticsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "test.c"
             binary = Path(tmp) / "test"
-            source.write_text(MOCK + BODY + MAIN)
+            source.write_text(MOCK + "\nvoid J313DiagnosticSummary(void) {}\n" + BODY + MAIN)
             subprocess.run(["clang", "-std=c11", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True)
 

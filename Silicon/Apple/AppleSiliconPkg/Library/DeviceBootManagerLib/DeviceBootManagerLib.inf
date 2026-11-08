@@ -19,6 +19,7 @@
 
 [Sources]
   DeviceBootManagerLib.c
+  J313DiagnosticSummary.c
 
 [Packages]
   MdePkg/MdePkg.dec

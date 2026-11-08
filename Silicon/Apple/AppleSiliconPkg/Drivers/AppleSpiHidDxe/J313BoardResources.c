@@ -396,9 +396,10 @@ int J313BoardResourcesParse(const void *blob,size_t size,J313_SPI_RESOURCES *out
  return J313BoardResourcesParseEx(blob,size,out,NULL);
 }
 #ifndef J313_HOST_TEST
-EFI_STATUS J313BoardResourcesLoad(J313_SPI_RESOURCES *Resources) {
+EFI_STATUS J313BoardResourcesLoadEx(J313_SPI_RESOURCES *Resources, J313_BOOT_DIAGNOSTIC *Snapshot) {
  VOID *Hob; APPLE_ADT_INFO_HOB *Info; VOID *Copy; int Result;
  J313_ADT_DIAGNOSTIC Diagnostic; uint32_t IdentityMask;
+ if(Snapshot) Snapshot->Valid &= ~(J313_DIAG_RESOURCE_VALID | J313_DIAG_IDENTITY_VALID);
  if(Resources==NULL) return EFI_INVALID_PARAMETER;
  ZeroMem(Resources,sizeof(*Resources));
  Hob=GetFirstGuidHob(&gAppleSiliconPkgAdtInfoHobGuid);
@@ -413,6 +414,10 @@ EFI_STATUS J313BoardResourcesLoad(J313_SPI_RESOURCES *Resources) {
  /* J313-only EXPERIMENTAL: assume identity, retain all resource checks and
   * the full reserved HOB span; ignore only the counted root tail. */
  Result=J313BoardResourcesParseExperimentalIdentityBypass(Copy,(UINTN)Info->AdtSize,Resources,&Diagnostic,&IdentityMask);
+ if(Snapshot) {
+  Snapshot->ResourceCode=(UINT32)Result; Snapshot->Valid |= J313_DIAG_RESOURCE_VALID;
+  if(Diagnostic.TreeComplete) { Snapshot->IdentityMask=IdentityMask; Snapshot->Valid |= J313_DIAG_IDENTITY_VALID; }
+ }
  DEBUG((DEBUG_ERROR,"J313 ADT EXPERIMENTAL IDENTITY-BYPASS mask=0x%x (assumed j313/t8103; not verified)\n",IdentityMask));
  FreePool(Copy);
  if(Diagnostic.TreeComplete) DEBUG((DEBUG_ERROR,"J313 ADT EXPERIMENTAL TAIL-IGNORED size=%Lu consumed=%Lu tail=%Lu zero=%u\n",
@@ -424,5 +429,8 @@ EFI_STATUS J313BoardResourcesLoad(J313_SPI_RESOURCES *Resources) {
  if(Result==1) DEBUG((DEBUG_ERROR,"J313 ADT detail reason=%u offset=%Lu node=%Lu property=%a\n",
   Diagnostic.Reason,(UINT64)Diagnostic.Offset,(UINT64)Diagnostic.NodeIndex,Diagnostic.Property));
  return Result==0?EFI_SUCCESS:(Result==5?EFI_OUT_OF_RESOURCES:EFI_UNSUPPORTED);
+}
+EFI_STATUS J313BoardResourcesLoad(J313_SPI_RESOURCES *Resources) {
+ return J313BoardResourcesLoadEx(Resources,NULL);
 }
 #endif

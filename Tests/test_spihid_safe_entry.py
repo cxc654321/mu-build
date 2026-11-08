@@ -26,6 +26,7 @@ class SafeEntryTests(unittest.TestCase):
             self.checked([cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-fshort-wchar",
                           "-fsanitize=address,undefined", "-I", inc, "-I", inc / arch,
                           "-I", ROOT / "MU_BASECORE/MdeModulePkg/Include",
+                          "-I", ROOT / "Silicon/Apple/AppleSiliconPkg/Include",
                           CORE / "test_entry.c", "-o", output])
             result = self.checked([output])
             self.assertIn("retained cleanup PASS", result)
