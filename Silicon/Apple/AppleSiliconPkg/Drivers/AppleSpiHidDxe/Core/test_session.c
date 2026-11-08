@@ -63,12 +63,33 @@ int main(void)
  start();assert(packet(0x40,0xd0,0x20,1,0xd0,99,0,report,6)==JS_DROP); /* wrong ID: never accepted */
  assert(s.phase==JS_INIT && s.init.requests==1 && s.init.started_ms==0);
  assert(s.init.reject_detail==3 && s.init.reject_mask==32);
+ assert(s.init.reject_id_valid && s.init.reject_expected_id==0 && s.init.reject_actual_id==99);
+ assert(s.init.reject_type==1 && s.init.reject_iface==0xd0);
  assert(js_tick(&s,1000)==JS_ERROR); /* unrelated replies cannot extend deadline */
+ assert(s.init.reject_id_valid && s.init.reject_actual_id==99);
  start();
  assert(packet(0x20,2,0x10,0,0,0,0,report,6)==JS_DROP); /* touch report interleaved */
  memset(p,0,sizeof(p));p[4]=3;p[6]=0xac;p[7]=5;
  assert(packet(0x40,0xd0,0x20,1,0xd0,0,0,p,24)==JS_TX);
  assert(s.phase==JS_INIT && s.init.phase==SH_INIT_IFACE1);
+ assert(!s.init.reject_id_valid && !s.init.reject_mask && !s.init.reject_detail);
+ /* Wire request uses the same global postincrement and byte offset as upstream. */
+ assert(a.packet[9]==2 && a.packet[10]==1 && a.packet[11]==1);
+ assert(packet(0x40,0xd0,0x20,2,1,0,512,p,16)==JS_DROP);
+ assert(s.init.reject_mask==32 && s.init.reject_id_valid);
+ assert(s.init.reject_expected_id==1 && s.init.reject_actual_id==0);
+ assert(s.init.reject_type==2 && s.init.reject_iface==1);
+ assert(js_tick(&s,1001)==JS_ERROR);
+ assert(s.failure_phase==SH_INIT_IFACE1 && s.failure_detail==SH_INIT_TIMEOUT);
+ assert(s.init.reject_expected_id==1 && s.init.reject_actual_id==0);
+ start();
+ assert(!s.init.reject_id_valid);
+ assert(packet(0x40,0xd0,0x20,1,0xd0,0,0,p,24)==JS_TX);
+ assert(packet(0x40,0xd0,0x20,2,1,0,512,p,16)==JS_DROP);
+ p[1]=1;p[6]=1;
+ assert(packet(0x40,0xd0,0x20,2,1,1,512,p,16)==JS_TX);
+ assert(s.init.phase==SH_INIT_IFACE2 && s.init.pending_id==2);
+ assert(!s.init.reject_id_valid && !s.init.reject_detail && !s.init.reject_mask);
  start();
  for(unsigned i=0;i<63;i++)
   assert(packet(0x20,2,0x10,0,0,0,0,report,6)==JS_DROP);

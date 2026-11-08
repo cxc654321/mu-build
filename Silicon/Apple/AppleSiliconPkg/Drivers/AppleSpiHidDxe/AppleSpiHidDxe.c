@@ -108,6 +108,11 @@ STATIC VOID DiagnosticHid (J313_CONTEXT *C, UINT32 Op, UINT32 Bus, UINT32 Domain
   D->HidDetail = C->Session.failure_domain ? C->Session.failure_detail : C->Session.detail;
   D->HidReject = C->Session.init.reject_detail;
   D->HidRejectMask = C->Session.init.reject_mask;
+  D->HidRejectIdValid = C->Session.init.reject_id_valid;
+  D->HidExpectedId = C->Session.init.reject_expected_id;
+  D->HidActualId = C->Session.init.reject_actual_id;
+  D->HidRequestType = C->Session.init.reject_type;
+  D->HidRequestIface = C->Session.init.reject_iface;
   D->HidPioStatus = C->Transport.LastTransfer.status;
   D->HidPioSegments = (UINT32)C->Transport.LastTransfer.segments_completed;
   D->HidPioFlags = C->Transport.LastTransfer.fifo_error_flags;

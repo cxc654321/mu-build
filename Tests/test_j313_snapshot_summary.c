@@ -11,6 +11,7 @@ EFI_SYSTEM_TABLE *gST=&st;
 static EFI_TPL tpl=TPL_APPLICATION;
 static unsigned lines, unknown, stalls, bottom;
 static UINT64 resource, identity, bus, stage, status;
+static UINT32 expected, actual, reqtype, iface;
 static EFI_CONFIGURATION_TABLE table;
 static EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL con;
 static EFI_SIMPLE_TEXT_OUTPUT_MODE mode;
@@ -32,6 +33,7 @@ VOID EFIAPI DebugPrint(UINTN level,CONST CHAR8 *fmt,...) {
  va_start(ap,fmt);
  if(contains(fmt,"Resource=%")){resource=va_arg(ap,UINT32);identity=va_arg(ap,UINT32);bus=va_arg(ap,UINT32);}
  if(contains(fmt,"J313 stage=")){stage=va_arg(ap,UINT32);status=va_arg(ap,UINT64);}
+ if(contains(fmt,"ID e/a=")){for(unsigned i=0;i<5;i++)(void)va_arg(ap,UINT32);expected=va_arg(ap,UINT32);actual=va_arg(ap,UINT32);reqtype=va_arg(ap,UINT32);iface=va_arg(ap,UINT32);}
  va_end(ap);
 }
 static EFI_STATUS EFIAPI stall(UINTN n){CHECK(tpl==TPL_APPLICATION&&n==30000000);stalls++;return EFI_SUCCESS;}
@@ -46,12 +48,15 @@ int main(void){
  table.VendorGuid=guid;table.VendorTable=&d;st.ConfigurationTable=&table;st.NumberOfTableEntries=1;
  reset();d.Version=1;d.Size=56;J313DiagnosticSummary();CHECK(lines==1&&unknown==1&&stalls==1);
  reset();d.Version=2;d.Size=sizeof(d);J313DiagnosticSummary();CHECK(lines==1&&unknown==1&&stalls==1);
+ reset();d.Version=3;d.Size=sizeof(d);J313DiagnosticSummary();CHECK(lines==1&&unknown==1&&stalls==1);
  reset();d.Version=99;J313DiagnosticSummary();CHECK(lines==1&&unknown==1&&stalls==1);
  reset();d.Version=J313_DIAG_VERSION;d.Size=sizeof(d)-1;J313DiagnosticSummary();CHECK(unknown==1&&lines==1);
  reset();d.Size=sizeof(d);J313DiagnosticSummary();CHECK(lines==5&&unknown==3&&stalls==1);
  d.Valid=J313_DIAG_RESOURCE_VALID|J313_DIAG_IDENTITY_VALID|J313_DIAG_BUS_VALID|J313_DIAG_CLEANUP_VALID|J313_DIAG_PMGR_VALID|J313_DIAG_HID_VALID;
  for(i=0;i<=5;i++) {reset();d.ResourceCode=i;d.IdentityMask=31;d.BusCode=i;d.Stage=J313StageBoard;d.Status=EFI_UNSUPPORTED;
  J313DiagnosticSummary();CHECK(lines==7&&unknown==0&&resource==i&&identity==31&&bus==i&&stage==J313StageBoard&&status==EFI_UNSUPPORTED);}
+ reset();d.HidRejectIdValid=1;d.HidExpectedId=1;d.HidActualId=0;d.HidRequestType=2;d.HidRequestIface=1;
+ J313DiagnosticSummary();CHECK(lines==7&&expected==1&&actual==0&&reqtype==2&&iface==1);
  for(i=TPL_CALLBACK;i<=TPL_HIGH_LEVEL;i++){reset();tpl=i;J313DiagnosticSummary();CHECK(!lines&&!stalls&&!bottom&&tpl==i);}
  puts("snapshot summary unknown, resource/bus codes, bottom placement, high TPL PASS");return 0;
 }

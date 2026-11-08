@@ -169,6 +169,15 @@ int main(void)
  destroy_fail=0;CHECK(AppleSpiHidDxeUnload(NULL)==EFI_SUCCESS);
  CHECK(table->HidOp==ops[i]&&table->HidDomain==7);
  }reset();}
+ {J313_CONTEXT c={0};
+ DiagnosticCreate();
+ c.Session.init.reject_id_valid=1;c.Session.init.reject_expected_id=1;
+ c.Session.init.reject_actual_id=0;c.Session.init.reject_type=2;c.Session.init.reject_iface=1;
+ DiagnosticHid(&c,1,0,JS_DOMAIN_INIT);
+ CHECK(table->Version==4&&table->HidFrozen&&table->HidRejectIdValid);
+ CHECK(table->HidExpectedId==1&&table->HidActualId==0&&table->HidRequestType==2&&table->HidRequestIface==1);
+ c.Session.init.reject_actual_id=99;DiagnosticHid(&c,2,0,0);
+ CHECK(table->HidActualId==0);}
  puts("snapshot lifetime and best-effort publication PASS");
  puts("production entry: board gate, handshake gate, console, EBS, retained cleanup PASS");
  puts("photo delay: each entry path, retained cleanup, live polling, high-TPL skip PASS");return 0;

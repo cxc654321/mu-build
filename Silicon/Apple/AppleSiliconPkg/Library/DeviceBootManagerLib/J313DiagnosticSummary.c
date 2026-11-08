@@ -41,7 +41,10 @@ VOID J313DiagnosticSummary (VOID)
     else DEBUG ((DEBUG_ERROR, "PMGR=UNKNOWN\n"));
     if (D->Valid & J313_DIAG_HID_VALID) {
       DEBUG ((DEBUG_ERROR, "HID op=%u ph=%u dom=%u err=%d bus=%u rej=%u/%x\n", D->HidOp, D->HidPhase, D->HidDomain, D->HidDetail, D->HidBus, D->HidReject, D->HidRejectMask));
-      DEBUG ((DEBUG_ERROR, "HID poll/rdy/rx/tx/drop=%x/%x/%x/%x/%x\n", D->HidPolls, D->HidReady, D->HidReads, D->HidWrites, D->HidDrops));
+      if (D->HidRejectIdValid)
+        DEBUG ((DEBUG_ERROR, "HID p/r/rx/tx/d=%x/%x/%x/%x/%x ID e/a=%02x/%02x t/i=%02x/%02x\n", D->HidPolls, D->HidReady, D->HidReads, D->HidWrites, D->HidDrops, D->HidExpectedId, D->HidActualId, D->HidRequestType, D->HidRequestIface));
+      else
+        DEBUG ((DEBUG_ERROR, "HID p/r/rx/tx/d=%x/%x/%x/%x/%x ID=n/a\n", D->HidPolls, D->HidReady, D->HidReads, D->HidWrites, D->HidDrops));
       DEBUG ((DEBUG_ERROR, "PIO e=%u seg=%u q/t/r=%lx/%lx/%lx f=%x ack=%08x\n", D->HidPioStatus, D->HidPioSegments, D->HidTxQueued, D->HidTxCompleted, D->HidRxCompleted, D->HidPioFlags, D->HidAck));
     } else {
       DEBUG ((DEBUG_ERROR, "HID=UNKNOWN (not started)\n"));

@@ -61,6 +61,7 @@ static int reject(struct sh_init *s, int reason)
 {
     s->reject_detail = reason;
     if (reason != 3) s->reject_mask = 0;
+    if (reason != 3 || s->reject_mask == 256) s->reject_id_valid = 0;
     ++s->rejected; return SH_INIT_REJECT;
 }
 static int request(struct sh_init *s, uint64_t now, struct sh_init_action *a)
@@ -130,7 +131,15 @@ int sh_init_message(struct sh_init *s, uint64_t now,
         if (m->unknown2 != s->pending_iface) mask |= 16u;
         if (m->id != s->pending_id) mask |= 32u;
         if (m->response_length != s->pending_response) mask |= 64u;
-        if (mask) { s->reject_mask = mask; return reject(s, 3); }
+        if (mask) {
+            s->reject_mask = mask;
+            s->reject_id_valid = 1;
+            s->reject_expected_id = s->pending_id;
+            s->reject_actual_id = m->id;
+            s->reject_type = s->pending_type;
+            s->reject_iface = s->pending_iface;
+            return reject(s, 3);
+        }
     }
     p = m->payload;
     switch (s->phase) {
@@ -153,6 +162,7 @@ int sh_init_message(struct sh_init *s, uint64_t now,
     }
     default: return stop(s, a, SH_INIT_STATE);
     }
+    s->reject_detail = 0; s->reject_mask = 0; s->reject_id_valid = 0;
     ++s->accepted;
     if (s->phase == SH_INIT_DONE) {
         a->phase = SH_INIT_DONE;

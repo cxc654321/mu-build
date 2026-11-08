@@ -28,6 +28,9 @@ struct sh_init {
     enum sh_init_phase phase, failure_phase;
     int failure_detail, reject_detail;
     unsigned reject_mask; /* retained through terminal stop */
+    /* Last rejected correlation, captured together; cleared on acceptance. */
+    unsigned reject_id_valid;
+    uint8_t reject_expected_id, reject_actual_id, reject_type, reject_iface;
     uint64_t last_ms, started_ms;
     unsigned next_id, events, requests, accepted, rejected;
     uint8_t pending_id, pending_type, pending_iface;
