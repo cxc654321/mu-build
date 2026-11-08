@@ -671,7 +671,12 @@
   AppleSiliconPkg/AcpiTables/GenericAcpiTables.inf
 
   # BDS
+  # J313 uses FrontpageDsc.inc's graphical FormDisplay provider only.
+  # This also removes HiiPopup: SecureBootConfig reset-to-default reports
+  # LocateProtocol failure; it is not a SetupBrowser/FrontPage dependency.
+!if $(PLATFORM_NAME) != MacBookAirMid2020
   MdeModulePkg/Universal/DisplayEngineDxe/DisplayEngineDxe.inf
+!endif
   MdeModulePkg/Universal/PrintDxe/PrintDxe.inf
   MdeModulePkg/Universal/Console/ConPlatformDxe/ConPlatformDxe.inf
   MdeModulePkg/Universal/Console/ConSplitterDxe/ConSplitterDxe.inf

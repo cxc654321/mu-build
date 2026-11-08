@@ -100,7 +100,7 @@ class FdfFvMainExpansionTests(unittest.TestCase):
         cls.include = INCLUDE.read_text(encoding="utf-8")
         cls.expected = json.loads(EXPECTED.read_text(encoding="utf-8"))
 
-    def _fvmain_infs(self, fdf: Path) -> list[str]:
+    def _fvmain_infs(self, fdf: Path, frontpage: bool = False) -> list[str]:
         text = fdf.read_text(encoding="utf-8")
         defines = defines_of(text)
         body = text[text.index("[FV.FvMain]"):]
@@ -109,6 +109,8 @@ class FdfFvMainExpansionTests(unittest.TestCase):
         for raw in body.splitlines():
             if raw.strip().startswith("!include") and "AppleSiliconFvMain.fdf.inc" in raw:
                 expanded.extend(expand(self.include, defines))
+            elif frontpage and raw.strip() == "!include AppleSiliconPkg/FrontpageFdf.inc":
+                expanded.extend((INCLUDE.parent / "FrontpageFdf.inc").read_text(encoding="utf-8").splitlines())
             else:
                 expanded.append(raw)
         return expand("\n".join(expanded), defines)
@@ -144,6 +146,39 @@ class FdfFvMainExpansionTests(unittest.TestCase):
             set(shapes), set(recorded),
             "the set of platforms changed; record the new ones in "
             f"{EXPECTED.name}")
+
+    def test_effective_fv_has_one_graphical_engine_and_text_only_outside_j313(self):
+        graphical = "MsGraphicsPkg/DisplayEngineDxe/DisplayEngineDxe.inf"
+        text_engine = "MdeModulePkg/Universal/DisplayEngineDxe/DisplayEngineDxe.inf"
+        for fdf in sorted(REPO.glob("Platform/*Pkg/*.fdf")):
+            with self.subTest(platform=fdf.name):
+                modules = [line.split()[1] for line in self._fvmain_infs(fdf, frontpage=True)]
+                self.assertEqual(modules.count(graphical), 1)
+                self.assertEqual(modules.count(text_engine), int(fdf.stem != "MacBookAirMid2020"))
+
+    def test_effective_dsc_matches_fv_display_engine_selection(self):
+        # Evaluate the actual shared component lists, with the platform identity
+        # read from each DSC (not inferred from its filename or test constants).
+        graphical = "MsGraphicsPkg/DisplayEngineDxe/DisplayEngineDxe.inf"
+        text_engine = "MdeModulePkg/Universal/DisplayEngineDxe/DisplayEngineDxe.inf"
+        common = (INCLUDE.parent / "AppleSiliconPkg.dsc.inc").read_text(encoding="utf-8")
+        frontpage = (INCLUDE.parent / "FrontpageDsc.inc").read_text(encoding="utf-8")
+        for fdf in sorted(REPO.glob("Platform/*Pkg/*.fdf")):
+            with self.subTest(platform=fdf.name):
+                dsc = fdf.with_suffix(".dsc").read_text(encoding="utf-8")
+                name = re.search(r"(?m)^\s*PLATFORM_NAME\s*=\s*(\w+)", dsc).group(1)
+                self.assertEqual(name, fdf.stem)
+                self.assertRegex(dsc, r"(?m)^!include AppleSiliconPkg/AppleSiliconPkg\.dsc\.inc$")
+                self.assertRegex(dsc, r"(?m)^!include AppleSiliconPkg/FrontpageDsc\.inc$")
+                # Adapt DSC component entries to the existing conditional INF
+                # evaluator; library mappings are deliberately not components.
+                component_text = re.sub(
+                    r"(?m)^(\s*)([\w/]+\.inf)(?=\s|$)",
+                    r"\1INF \2", common + "\n" + frontpage)
+                modules = [line.split()[1] for line in expand(
+                    component_text, {**defines_of(dsc), "PLATFORM_NAME": name})]
+                self.assertEqual(modules.count(graphical), 1)
+                self.assertEqual(modules.count(text_engine), int(name != "MacBookAirMid2020"))
 
     def test_the_include_is_actually_used(self):
         for fdf in sorted(REPO.glob("Platform/*Pkg/*.fdf")):

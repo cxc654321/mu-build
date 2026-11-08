@@ -140,7 +140,11 @@
 !endif
   INF MdeModulePkg/Universal/PrintDxe/PrintDxe.inf
   INF MdeModulePkg/Universal/DevicePathDxe/DevicePathDxe.inf
+# J313 uses the graphical engine already supplied by FrontpageFdf.inc.
+# SetupBrowser caches the first FormDisplay provider; do not package both.
+!if $(PLATFORM_PKG) != MacBookAirMid2020Pkg
   INF MdeModulePkg/Universal/DisplayEngineDxe/DisplayEngineDxe.inf
+!endif
   INF MdeModulePkg/Universal/SetupBrowserDxe/SetupBrowserDxe.inf
   INF MdeModulePkg/Universal/DriverHealthManagerDxe/DriverHealthManagerDxe.inf
   INF MdeModulePkg/Universal/BdsDxe/BdsDxe.inf
