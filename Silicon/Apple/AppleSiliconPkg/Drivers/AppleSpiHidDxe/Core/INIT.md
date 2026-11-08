@@ -2,8 +2,8 @@
 # J313 SPI-HID：初始化状态机来源与协议约束
 
 > 本文件后文保留最初离线开发记录。当前目录是生产 DXE Core 移植，已由父目录主驱动实际调用；原 `test_init.c` 未复制到此目录，当前生产测试是 `test_session.c` 和仓库根 `Tests/test_spihid_safe_entry.py`。原实验实现和测试仍在 `Experimental/J313SpiHidProtocol`。
-> 集成层将 SH_INIT_REJECT 作为丢弃消息处理，保留阶段 deadline 和事件预算，不因无关输入立刻终止，也不接受错误关联响应。其他负值仍终止。
-> 下面的历史相对文档路径不适用于本移植目录；请通过同目录 PROVENANCE 和 PORTING 文档核对来源。实机握手尚未验证。
+> 当前生产策略：按 Asahi 上游移除 reply ID equality gate，仅凭 ID 不同不拒绝；pending type/iface 与所有其他 CRC/header/length/rsp/descriptor/deadline/event 检查保持。发送仍为 global 递增。正常推进的 ID 差异仅 DEBUG_INFO 观察，详见 ID-CORRELATION.md。集成层将 SH_INIT_REJECT 作为丢弃消息处理，不刷新阶段 deadline；其他负值仍终止。
+> 下面保留的离线开发记录与历史测试描述不代表当前生产 ID 策略；历史相对路径不适用本目录。实机已观察 IFACE1 tx/rx=01/00、仅mask20后超时，移除gate后的完整握手尚未实机验证。
 
 仅新增 [sh_init.h](sh_init.h)、[sh_init.c](sh_init.c)、[test_init.c](test_init.c) 与本文。既有协议/README不变；无 MMIO、SPI 调用、电源操作、固件构建接入、输入安装、push 或部署。
 
@@ -28,7 +28,7 @@
 - 每个等待阶段1000ms；now-start>=1000超时，晚到的正确reply也拒绝。错误回复不推进、不刷新期限。每轮最多64个输入事件和5个请求，无隐式retry；第65个输入进入FAILED。poll不算输入事件，不延长期限。
 - boot入口要求完整256字节packet并自行重新验外层CRC、长度4和精确magic；保守要求offset/remain均0。上游未限定boot flags/device，故不编造它们的值；测试的零值不是硬件抓包证明。
 - message入口只接受外层已通过 sh_feed 返回SH_MESSAGE的完整消息，调用者保证两个CRC、重组及payload有效期。sh_message没有CRC原始字节，状态机无法再次验证，不能传裸构造的未验证消息。测试负例会主动篡改解析后的元数据以测试防御边界，这不改变生产调用契约。
-- 请求关联检查flags=40、device=d0、u0/u1/u2、ID及rsplen。**device=d0回显是保守接受策略，不是上游已验证的接收端规律**：上游response分派并不检查外层device。ID回显也未由上游分派强制；这里故意更严格。不兼容回复会停留等待直至超时，而非放宽猜测。
+- 当前生产请求关联检查flags=40、device=d0、u0/u1/u2及rsplen，不要求reply ID回显。**device=d0回显仍是保守接受策略，不是上游已验证的接收端规律**。ID差异不计拒绝bit32；其余不兼容回复停留等待直至超时。
 - DEVICE要求24..512字节、num_devices>=3、vendor非零、字符串区间不越界；不复制字符串。IFACE要求16..512、interface_num等于待定接口、max_input非零、name区间合法。全部用逐字节LE解码，无未对齐struct cast。未知字段不赋予状态语义；上述额外限制是fail-closed策略。
 - DESC要求1..512字节，复制到context固定缓冲；必须全部完成才通过sh_init_descriptor对外返回。FAILED/restart/reset清除全部descriptor。输出是**传输CRC、请求关联及长度验证后的bytes，不是HID语义验证后的描述符**，测试故意使用不保证HID合法的内容来维持层次分离。
 - 未知类型、错误关联、空/超长/短结构/坏范围不推进。公开core没有通用错误reply结构，因此不编造status字段。若设备以完全相同的成功header及结构承载不可辨别错误，本阶段不能识别；尤其descriptor payload需要后续HID语义校验，不能据DONE安装输入协议。
@@ -37,9 +37,13 @@
 
 context必须由本API初始化，字段对调用者不透明，外部串行化；输入、context和action缓冲不得重叠。非REQUEST结果的action.packet_length始终0。描述符借用指针只在DONE有效，直到restart/reset或失败。
 
-restart保留已消费ID，不复用旧ID；不足剩余5个ID时拒绝新一轮，避免8位ID回绕使旧reply被接受。reset清空ID和状态，**必须先停用旧transport并drain旧RX/重组数据**，否则相同ID无法区分旧会话；状态机没有线上的epoch，不能假装能防御这种跨reset重放。boot通知同样没有epoch，上层必须隔离旧队列。restart不自行清理sh_rx、取消I/O或复位硬件。
+restart保留已消费TX ID，不复用旧ID；不足剩余5个ID时仍拒绝新一轮。该预算不是reply防重放机制。reset清空ID和状态；reset/restart **必须先停用旧transport并drain旧RX/重组数据**。当前五请求无retry链中type/iface各不相同，前阶段重复reply不推进；但同type/iface的跨会话旧reply无法区分。状态机没有线上epoch，不能声称防御跨reset/restart重放。boot通知同样没有epoch；restart不自行清理sh_rx、取消I/O或复位硬件。
 
-## 实际 host tests
+## 当前生产 host tests
+
+仓库根运行 `python3 -m unittest Tests.test_spihid_safe_entry Tests.test_j313_snapshot_summary -v`。覆盖不同reply ID的完整5请求与真实HID校验、非法descriptor不发布、错误type/iface/CRC/length、期限与事件预算、前阶段重复reply及诊断快照。
+
+## 历史 Experimental host tests（原实现保留ID gate，不代表当前生产）
 
 在本目录执行（产物只写临时目录，不进固件/仓库）：
 

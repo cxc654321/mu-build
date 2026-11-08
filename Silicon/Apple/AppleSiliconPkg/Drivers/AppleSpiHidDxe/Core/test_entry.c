@@ -171,6 +171,8 @@ int main(void)
  }reset();}
  {J313_CONTEXT c={0};
  DiagnosticCreate();
+ /* Real rejection is iface mismatch (not ID); IDs remain frozen context. */
+ c.Session.init.reject_detail=3;c.Session.init.reject_mask=16;
  c.Session.init.reject_id_valid=1;c.Session.init.reject_expected_id=1;
  c.Session.init.reject_actual_id=0;c.Session.init.reject_type=2;c.Session.init.reject_iface=1;
  DiagnosticHid(&c,1,0,JS_DOMAIN_INIT);

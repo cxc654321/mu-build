@@ -5,6 +5,9 @@
  */
 #include "sh_init.h"
 #include "J313CoreCompat.h"
+#ifndef J313_HOST_TEST
+#include <Library/DebugLib.h>
+#endif
 static uint16_t le16(const uint8_t *p)
 { return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8)); }
 static int stop(struct sh_init *s, struct sh_init_action *a, int error)
@@ -56,7 +59,7 @@ static int event(struct sh_init *s, struct sh_init_action *a)
     return SH_INIT_WAIT;
 }
 /* Stable rejection reasons: 1 boot shape, 2 outer CRC, 3 correlation,
- * 4 device descriptor, 5 interface descriptor. No acceptance policy change. */
+ * 4 device descriptor, 5 interface descriptor. */
 static int reject(struct sh_init *s, int reason)
 {
     s->reject_detail = reason;
@@ -129,7 +132,8 @@ int sh_init_message(struct sh_init *s, uint64_t now,
         if (m->unknown0 != 0x20) mask |= 4u;
         if (m->unknown1 != s->pending_type) mask |= 8u;
         if (m->unknown2 != s->pending_iface) mask |= 16u;
-        if (m->id != s->pending_id) mask |= 32u;
+        /* Upstream dispatches by type/interface, not echoed reply ID.
+         * Bit 32 is reserved; an ID difference is not a rejection. */
         if (m->response_length != s->pending_response) mask |= 64u;
         if (mask) {
             s->reject_mask = mask;
@@ -162,6 +166,13 @@ int sh_init_message(struct sh_init *s, uint64_t now,
     }
     default: return stop(s, a, SH_INIT_STATE);
     }
+#ifndef J313_HOST_TEST
+    /* Log only replies that passed all init checks; HID validation follows. */
+    if (m->id != s->pending_id)
+        DEBUG ((DEBUG_INFO, "SPI-HID init accepted ID difference tx/rx=%02x/%02x t/i=%02x/%02x\n",
+                (unsigned)s->pending_id, (unsigned)m->id,
+                (unsigned)s->pending_type, (unsigned)s->pending_iface));
+#endif
     s->reject_detail = 0; s->reject_mask = 0; s->reject_id_valid = 0;
     ++s->accepted;
     if (s->phase == SH_INIT_DONE) {

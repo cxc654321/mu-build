@@ -28,7 +28,8 @@ struct sh_init {
     enum sh_init_phase phase, failure_phase;
     int failure_detail, reject_detail;
     unsigned reject_mask; /* retained through terminal stop */
-    /* Last rejected correlation, captured together; cleared on acceptance. */
+    /* Last rejected header/length correlation; IDs are context, not a gate.
+     * Captured together; cleared on acceptance. Bit 32 is reserved. */
     unsigned reject_id_valid;
     uint8_t reject_expected_id, reject_actual_id, reject_type, reject_iface;
     uint64_t last_ms, started_ms;
@@ -38,8 +39,9 @@ struct sh_init {
     size_t descriptor_length[2];
     uint8_t descriptor[2][SH_INIT_DESC_MAX];
 };
-/* First use/reset requires transport quiesced and stale RX drained: reset
- * forgets IDs. restart preserves consumed IDs, refuses reuse after 256. */
+/* First use/reset/restart requires transport quiesced and stale RX drained.
+ * IDs do not distinguish stale replies. restart preserves consumed TX IDs,
+ * refuses reuse after 256; reset forgets IDs. */
 void sh_init_reset(struct sh_init *s);
 int sh_init_restart(struct sh_init *s, uint64_t now_ms,
                     struct sh_init_action *out);
