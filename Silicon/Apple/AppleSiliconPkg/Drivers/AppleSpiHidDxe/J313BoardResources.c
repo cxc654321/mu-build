@@ -203,14 +203,20 @@ radt_status radt_validate(const void *buffer, size_t size, radt_workspace *w)
 {
     return validate_root(buffer, size, w, 0);
 }
-static const radt_property *prop(const unsigned char *b,
+static const radt_property *raw_prop(const unsigned char *b,
     const radt_workspace *w, size_t node, const char *key)
 {
     size_t i;
     for (i = w->nodes[node].first;
          i < w->nodes[node].first + w->nodes[node].count; ++i)
-        if (eq(b, w->props[i].key, key)) return w->props[i].flags ? NULL : &w->props[i];
+        if (eq(b, w->props[i].key, key)) return &w->props[i];
     return NULL;
+}
+static const radt_property *prop(const unsigned char *b,
+    const radt_workspace *w, size_t node, const char *key)
+{
+    const radt_property *p = raw_prop(b,w,node,key);
+    return p && !p->flags ? p : NULL;
 }
 static size_t exact_path(const unsigned char *b, const radt_workspace *w,
                          const char *path)
@@ -318,13 +324,48 @@ static int power(struct power_walk *p,uint16_t id) {
  p->done[p->done_count++]=id;
  return 1;
 }
-static int gates(struct power_walk *w,const char *path) {
- const radt_property *p=get(w->b,w->w,path,"clock-gates"); size_t i;
+/* GPIO clocks need not be advertised by clock-gates. Identify a unique physical
+ * PS record using public t8103{,-pmgr}.dtsi, not guessed ADT name spelling or ID.
+ * Every physical record must resolve, so an invalid record cannot hide a second
+ * candidate. Dependencies still pass power() and the transport allowlist. */
+static int address_gate(struct power_walk *w,uint64_t wanted) {
+ const unsigned char *match=NULL; size_t i; unsigned matches=0; uint16_t id;
+ for(i=0;i<w->dev->size;i+=48) {
+  const unsigned char *d=w->b+w->dev->data+i;
+  uint64_t base,size,off; uint32_t reg;
+  if(d[0]&0x10) continue;
+  if(w->diag) { w->diag->Id=dev_id(w,d); w->diag->RecordIndex=(uint32_t)(i/48); w->diag->PsIndex=d[11]; w->diag->RegIndex=UINT32_MAX; }
+  if(d[11]>=w->ps->size/12) return power_fail(w,J313_PMGR_PS_INDEX);
+  reg=le32(w->b+w->ps->data+d[11]*12);
+  if(w->diag) w->diag->RegIndex=reg;
+  if(!reg_at(w->b,w->w,"/arm-io/pmgr",reg,&base,&size)) return power_fail(w,J313_PMGR_REG);
+  off=(uint64_t)le32(w->b+w->ps->data+d[11]*12+4)+((uint64_t)d[10]<<3);
+  if(size<4 || off>size-4 || (off&3)) return power_fail(w,J313_PMGR_OFFSET);
+  if(base+off!=wanted) continue;
+  match=d; ++matches;
+  if(w->diag) { w->diag->RecordIndex=(uint32_t)(i/48); w->diag->PsIndex=d[11]; w->diag->RegIndex=reg; }
+ }
+ if(matches!=1) return power_fail(w,matches?J313_PMGR_GPIO_ADDRESS_DUPLICATE:J313_PMGR_GPIO_ADDRESS_MISSING);
+ id=dev_id(w,match);
+ if(w->diag) { w->diag->Gate=id; w->diag->Id=id; }
+ if(!id) return power_fail(w,J313_PMGR_GATE_ID);
+#ifndef J313_HOST_TEST
+ DEBUG((DEBUG_ERROR,"J313 PMGR missing clock-gates resolved PS=%Lx real-id=%u bits=%u\n",
+  wanted,(unsigned)id,w->u8?8u:16u));
+#endif
+ return power(w,id);
+}
+static int gates(struct power_walk *w,const char *path,uint64_t address) {
+ size_t node=exact_path(w->b,w->w,path),i;
+ const radt_property *p=node==SIZE_MAX?NULL:raw_prop(w->b,w->w,node,"clock-gates");
  if(w->diag) {
   w->diag->GateLength=p?(uint32_t)p->size:UINT32_MAX;
   w->diag->Id=w->diag->RecordIndex=w->diag->PsIndex=w->diag->RegIndex=UINT32_MAX;
  }
- if(!p || !p->size || p->size%4 || p->size>64) return power_fail(w,J313_PMGR_GATE_FORMAT);
+ if(node==SIZE_MAX) return power_fail(w,J313_PMGR_GATE_FORMAT);
+ if(!p) return address_gate(w,address);
+ if(p->flags) return power_fail(w,J313_PMGR_GATE_FLAGS);
+ if(!p->size || p->size%4 || p->size>64) return power_fail(w,J313_PMGR_GATE_FORMAT);
  for(i=0;i<p->size;i+=4) {
   uint32_t id=le32(w->b+p->data+i);
   if(w->diag) { w->diag->Gate=id; w->diag->Id=id; }
@@ -374,9 +415,9 @@ static int ParseResources(const void *blob,size_t size,J313_SPI_RESOURCES *out, 
  /* m1n1 src/pmgr.c:418-421 uses exactly this ID-width heuristic. */
  walk.u8=b[walk.dev->data+3]!=b[walk.dev->data+48+3];
  if(pmgr) { pmgr->IdWidth=walk.u8?8:16; pmgr->Source=2; pmgr->Gate=UINT32_MAX; }
- if(!gates(&walk,"/arm-io/gpio")) return 4;
+ if(!gates(&walk,"/arm-io/gpio",UINT64_C(0x23b700130))) return 4;
  if(pmgr) { pmgr->Source=3; pmgr->Gate=UINT32_MAX; }
- if(!gates(&walk,"/arm-io/nub-gpio")) return 4;
+ if(!gates(&walk,"/arm-io/nub-gpio",UINT64_C(0x23d280080))) return 4;
  if(pmgr) { pmgr->Source=1; pmgr->Gate=0x34; pmgr->GateLength=4; }
  if(!power(&walk,0x34)) return 4;
  if(!r.PowerCount) { power_fail(&walk,J313_PMGR_EMPTY); return 4; }

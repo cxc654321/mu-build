@@ -3,7 +3,10 @@
 #define J313_BOARD_RESOURCES_H
 #include "J313SpiTransport.h"
 /* Zero output on failure. Pure bounded parser; no MMIO, no ownership claim.
- * Returns 0 on success, nonzero on invalid/unsupported ADT. */
+ * Returns 0 on success, nonzero on invalid/unsupported ADT.
+ * Only absent GPIO clock-gates can recover via a unique physical PMGR record at
+ * the public J313 PS address. Present invalid/flagged properties still fail;
+ * actual ID, dependencies and transport address policy are never synthesized. */
 int J313BoardResourcesParse(const void *Blob, size_t Size, J313_SPI_RESOURCES *Resources);
 /* Stable numeric structural failure reasons; offsets are blob-relative.
  * NodeIndex is preorder, SIZE_MAX when unavailable. Property is sanitized ASCII,
@@ -69,7 +72,8 @@ typedef enum {
  J313_PMGR_ID_MISSING, J313_PMGR_ID_DUPLICATE, J313_PMGR_CYCLE,
  J313_PMGR_WALK_LIMIT, J313_PMGR_PS_INDEX, J313_PMGR_REG,
  J313_PMGR_OFFSET, J313_PMGR_APERTURE, J313_PMGR_RELATIVE,
- J313_PMGR_ALIAS, J313_PMGR_POWER_LIMIT, J313_PMGR_EMPTY, J313_PMGR_PS_GROUPS
+ J313_PMGR_ALIAS, J313_PMGR_POWER_LIMIT, J313_PMGR_EMPTY, J313_PMGR_PS_GROUPS,
+ J313_PMGR_GPIO_ADDRESS_MISSING, J313_PMGR_GPIO_ADDRESS_DUPLICATE, J313_PMGR_GATE_FLAGS
 } J313_PMGR_REASON;
 typedef struct {
  uint32_t Attempted, Reason, Source, Gate, Id, IdWidth;

@@ -20,7 +20,7 @@ else:
 import struct
 
 
-def public_fixture():
+def public_fixture(missing=(), u16=False):
     devices = []
     # Synthetic IDs; positions and parent edges are public DTS facts.
     for ident, p0, p1, offset, index in [
@@ -34,12 +34,18 @@ def public_fixture():
         d = bytearray(48)
         d[3:6] = bytes([ident, p0, p1])
         d[10:12] = bytes([offset, index])
+        if u16:
+            d[3:8] = bytes(5)
+            d[4:8] = struct.pack('<HH', p0, p1)
+            d[26:28] = struct.pack('<H', ident)
         devices.append(d)
     spi = node('spi3', [('compatible', b'spi-1,spimc\0'),
         ('reg', reg(0x3510c000, 0x4000)), ('clock-gates', u32(0x34))],
         [node('ipd', [('compatible', b'hid-transport,spi\0')])])
-    gpio = node('gpio', [('reg', reg(0x3c100000, 0x100000)), ('clock-gates', u32(4))])
-    nub = node('nub-gpio', [('reg', reg(0x3d1f0000, 0x4000)), ('clock-gates', u32(5))])
+    gpio = node('gpio', [('reg', reg(0x3c100000, 0x100000))] +
+        ([] if 'gpio' in missing else [('clock-gates', u32(4))]))
+    nub = node('nub-gpio', [('reg', reg(0x3d1f0000, 0x4000))] +
+        ([] if 'nub-gpio' in missing else [('clock-gates', u32(5))]))
     pmgr = node('pmgr', [('reg', reg(0x3b700000, 0x14000) + reg(0x3d280000, 0x4000)),
         ('devices', b''.join(devices)), ('ps-regs', struct.pack('<IIIIII', 0, 0, 0, 1, 0, 0))])
     arm = node('arm-io', [('compatible', b'arm-io,t8103\0'),
@@ -119,6 +125,17 @@ int contract_init(const J313_SPI_RESOURCES *r, const J313_SPI_IO *io) {
         self.assertEqual(status, 0)
         writes = [a for op, a in events if op == 'write' and a in {r.pmgr+x for x in expected}]
         self.assertEqual(writes, [r.pmgr+x for x in expected])
+
+    def test_missing_gpio_gates_still_power_before_transport(self):
+        expected = [0x130, 0x1b80080, 0x1c0, 0x1c8, 0x218, 0x258]
+        for missing in [('gpio',), ('nub-gpio',), ('gpio', 'nub-gpio')]:
+            for u16 in [False, True]:
+                r = self.parse(public_fixture(missing, u16))
+                self.assertEqual(list(r.offsets)[:r.count], expected)
+                status, events = self.init(r)
+                self.assertEqual(status, 0)
+                writes = [a for op, a in events if op == 'write' and a in {r.pmgr+x for x in expected}]
+                self.assertEqual(writes, [r.pmgr+x for x in expected])
 
     def test_original_synthetic_low_offset_rejected_without_mmio(self):
         r = self.parse(fixture())
