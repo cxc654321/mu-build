@@ -151,6 +151,7 @@ jobs:
           python3 -B Tests/test_j313_resource_transport_contract.py
           python3 -B Tests/test_j313_keyboard_adapter.py
           python3 -B Tests/test_j313_board_resources.py
+          python3 -B Tests/test_j313_pmgr_diagnostics.py
           python3 -B Tests/test_j313_gui_diagnostics.py
           python3 -B Tests/test_j313_photo_pause.py
           python3 -B Tests/test_j313_snapshot_summary.py

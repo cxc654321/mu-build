@@ -30,14 +30,17 @@ VOID J313DiagnosticSummary (VOID)
   if (D == NULL) {
     DEBUG ((DEBUG_ERROR, "J313 snapshot UNKNOWN (missing/version/size); menu in 30s\n"));
   } else {
-    DEBUG ((DEBUG_ERROR, "J313 stage=%u status=%lx valid=%x\n", D->Stage, D->Status, D->Valid));
+    DEBUG ((DEBUG_ERROR, "J313 stage=%u status=%lx valid=%x last=%u/%lx\n", D->Stage, D->Status, D->Valid, D->LastFailureStage, D->LastFailureStatus));
     if (D->Valid & J313_DIAG_RESOURCE_VALID) DEBUG ((DEBUG_ERROR, "Resource code=%u (1 struct 2 id 3 reg 4 pmgr 5 alloc)\n", D->ResourceCode));
     else DEBUG ((DEBUG_ERROR, "Resource code=UNKNOWN\n"));
     if (D->Valid & J313_DIAG_IDENTITY_VALID) DEBUG ((DEBUG_ERROR, "Identity mask=%x (BYPASS; not verified)\n", D->IdentityMask));
     else DEBUG ((DEBUG_ERROR, "Identity mask=UNKNOWN\n"));
     if (D->Valid & J313_DIAG_BUS_VALID) DEBUG ((DEBUG_ERROR, "SPI init buscode=%u\n", D->BusCode));
     else DEBUG ((DEBUG_ERROR, "SPI init buscode=UNKNOWN\n"));
-    DEBUG ((DEBUG_ERROR, "Last failure stage=%u status=%lx\n", D->LastFailureStage, D->LastFailureStatus));
+    if (D->Valid & J313_DIAG_PMGR_VALID) {
+      DEBUG ((DEBUG_ERROR, "PMGR err=%u src=%u gate=%x id=%x bits=%u rec=%x\n", D->PmgrReason, D->PmgrSource, D->PmgrGate, D->PmgrId, D->PmgrIdWidth, D->PmgrRecordIndex));
+      DEBUG ((DEBUG_ERROR, "PMGR len=%x/%x/%x ps/reg=%x/%x\n", D->PmgrGateLength, D->PmgrDevicesLength, D->PmgrPsLength, D->PmgrPsIndex, D->PmgrRegIndex));
+    } else DEBUG ((DEBUG_ERROR, "PMGR=UNKNOWN\n"));
     if (D->Valid & J313_DIAG_CLEANUP_VALID) DEBUG ((DEBUG_ERROR, "Cleanup=%lx; menu in 30s\n", D->CleanupStatus));
     else DEBUG ((DEBUG_ERROR, "Cleanup=UNKNOWN; menu in 30s\n"));
   }

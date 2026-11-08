@@ -61,6 +61,23 @@ int J313BoardResourcesParseContainer(const void *Blob, size_t Size,
  */
 int J313BoardResourcesParseExperimentalIdentityBypass(const void *Blob, size_t Size,
   J313_SPI_RESOURCES *Resources, J313_ADT_DIAGNOSTIC *Diagnostic, uint32_t *IdentityMask);
+/* PMGR diagnostics are observational only; UINT32_MAX means no index/value.
+ * Source: 1=spi3, 2=gpio, 3=nub-gpio. IdWidth: 0=unknown, 8/16. */
+typedef enum {
+ J313_PMGR_OK=0, J313_PMGR_SPI_GATE, J313_PMGR_DEVICES,
+ J313_PMGR_PS_REGS, J313_PMGR_GATE_FORMAT, J313_PMGR_GATE_ID,
+ J313_PMGR_ID_MISSING, J313_PMGR_ID_DUPLICATE, J313_PMGR_CYCLE,
+ J313_PMGR_WALK_LIMIT, J313_PMGR_PS_INDEX, J313_PMGR_REG,
+ J313_PMGR_OFFSET, J313_PMGR_APERTURE, J313_PMGR_RELATIVE,
+ J313_PMGR_ALIAS, J313_PMGR_POWER_LIMIT, J313_PMGR_EMPTY, J313_PMGR_PS_GROUPS
+} J313_PMGR_REASON;
+typedef struct {
+ uint32_t Attempted, Reason, Source, Gate, Id, IdWidth;
+ uint32_t DevicesLength, PsLength, RecordIndex, PsIndex, RegIndex, GateLength;
+} J313_PMGR_DIAGNOSTIC;
+int J313BoardResourcesParseDetailed(const void *Blob, size_t Size,
+ J313_SPI_RESOURCES *Resources, J313_ADT_DIAGNOSTIC *Diagnostic,
+ uint32_t *IdentityMask, J313_PMGR_DIAGNOSTIC *Pmgr);
 #ifndef J313_HOST_TEST
 #include <Uefi.h>
 #include <Guid/J313BootDiagnostic.h>

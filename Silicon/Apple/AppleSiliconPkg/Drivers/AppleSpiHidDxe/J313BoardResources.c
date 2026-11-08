@@ -272,7 +272,12 @@ struct power_walk {
  const radt_property *dev,*ps;
  uint16_t active[16],done[16]; unsigned depth,done_count; int u8;
  J313_SPI_RESOURCES *out;
+ J313_PMGR_DIAGNOSTIC *diag;
 };
+static int power_fail(struct power_walk *p,uint32_t reason) {
+ if(p->diag) p->diag->Reason=reason;
+ return 0;
+}
 static uint16_t dev_id(struct power_walk *p,const unsigned char *d) {
  return p->u8?d[3]:(uint16_t)(d[26]|((uint16_t)d[27]<<8));
 }
@@ -280,47 +285,56 @@ static int power(struct power_walk *p,uint16_t id) {
  const unsigned char *d=NULL; size_t i; unsigned matches=0; uint64_t base,size,off,addr;
  uint32_t reg,ps_off; uint16_t parent[2];
  if(!id) return 1;
- for(i=0;i<p->depth;i++) if(p->active[i]==id) return 0;
+ if(p->diag) { p->diag->Id=id; p->diag->RecordIndex=UINT32_MAX; p->diag->PsIndex=UINT32_MAX; p->diag->RegIndex=UINT32_MAX; }
+ for(i=0;i<p->depth;i++) if(p->active[i]==id) return power_fail(p,J313_PMGR_CYCLE);
  for(i=0;i<p->done_count;i++) if(p->done[i]==id) return 1;
- if(p->depth==16 || p->done_count==16) return 0;
- for(i=0;i<p->dev->size;i+=48) if(dev_id(p,p->b+p->dev->data+i)==id) { d=p->b+p->dev->data+i; matches++; }
- if(matches!=1) return 0;
+ if(p->depth==16 || p->done_count==16) return power_fail(p,J313_PMGR_WALK_LIMIT);
+ for(i=0;i<p->dev->size;i+=48) if(dev_id(p,p->b+p->dev->data+i)==id) { d=p->b+p->dev->data+i; matches++; if(p->diag) p->diag->RecordIndex=(uint32_t)(i/48); }
+ if(matches!=1) return power_fail(p,matches?J313_PMGR_ID_DUPLICATE:J313_PMGR_ID_MISSING);
  p->active[p->depth++]=id;
  parent[0]=p->u8?d[4]:(uint16_t)(d[4]|((uint16_t)d[5]<<8));
  parent[1]=p->u8?d[5]:(uint16_t)(d[6]|((uint16_t)d[7]<<8));
  if(!power(p,parent[0]) || !power(p,parent[1])) return 0;
  --p->depth;
+ if(p->diag) { p->diag->Id=id; p->diag->RecordIndex=(uint32_t)((d-p->b-p->dev->data)/48); p->diag->PsIndex=d[11]; p->diag->RegIndex=UINT32_MAX; }
  if(!(d[0]&0x10)) {
-  if(d[11]>=p->ps->size/12) return 0;
+  if(d[11]>=p->ps->size/12) return power_fail(p,J313_PMGR_PS_INDEX);
   reg=le32(p->b+p->ps->data+d[11]*12); ps_off=le32(p->b+p->ps->data+d[11]*12+4);
-  if(!reg_at(p->b,p->w,"/arm-io/pmgr",reg,&base,&size)) return 0;
+  if(p->diag) p->diag->RegIndex=reg;
+  if(!reg_at(p->b,p->w,"/arm-io/pmgr",reg,&base,&size)) return power_fail(p,J313_PMGR_REG);
   off=(uint64_t)ps_off+((uint64_t)d[10]<<3);
-  if(size<4 || off>size-4 || (off&3)) return 0;
+  if(size<4 || off>size-4 || (off&3)) return power_fail(p,J313_PMGR_OFFSET);
   addr=base+off;
   /* Physical J313 PMGR main/mini apertures, not a gate-ID-derived address. */
   if(!((addr>=UINT64_C(0x23b700000) && addr<UINT64_C(0x23b800000)) ||
-       (addr>=UINT64_C(0x23d280000) && addr<UINT64_C(0x23d284000)))) return 0;
-  if(addr<p->out->PmgrBase || addr-p->out->PmgrBase>UINT32_MAX) return 0;
-  for(i=0;i<p->out->PowerCount;i++) if(p->out->PowerOffset[i]==addr-p->out->PmgrBase) return 0;
-  if(p->out->PowerCount==J313_SPI_POWER_MAX) return 0;
+       (addr>=UINT64_C(0x23d280000) && addr<UINT64_C(0x23d284000)))) return power_fail(p,J313_PMGR_APERTURE);
+  if(addr<p->out->PmgrBase || addr-p->out->PmgrBase>UINT32_MAX) return power_fail(p,J313_PMGR_RELATIVE);
+  for(i=0;i<p->out->PowerCount;i++) if(p->out->PowerOffset[i]==addr-p->out->PmgrBase) return power_fail(p,J313_PMGR_ALIAS);
+  if(p->out->PowerCount==J313_SPI_POWER_MAX) return power_fail(p,J313_PMGR_POWER_LIMIT);
   p->out->PowerOffset[p->out->PowerCount++]=(uint32_t)(addr-p->out->PmgrBase);
   if(addr-p->out->PmgrBase+4>p->out->PmgrSize) p->out->PmgrSize=addr-p->out->PmgrBase+4;
  }
- if(p->done_count==16) return 0;
+ if(p->done_count==16) return power_fail(p,J313_PMGR_WALK_LIMIT);
  p->done[p->done_count++]=id;
  return 1;
 }
 static int gates(struct power_walk *w,const char *path) {
  const radt_property *p=get(w->b,w->w,path,"clock-gates"); size_t i;
- if(!p || !p->size || p->size%4 || p->size>64) return 0;
+ if(w->diag) {
+  w->diag->GateLength=p?(uint32_t)p->size:UINT32_MAX;
+  w->diag->Id=w->diag->RecordIndex=w->diag->PsIndex=w->diag->RegIndex=UINT32_MAX;
+ }
+ if(!p || !p->size || p->size%4 || p->size>64) return power_fail(w,J313_PMGR_GATE_FORMAT);
  for(i=0;i<p->size;i+=4) {
   uint32_t id=le32(w->b+p->data+i);
-  if(!id || id>0xffff || !power(w,(uint16_t)id)) return 0;
+  if(w->diag) { w->diag->Gate=id; w->diag->Id=id; }
+  if(!id || id>0xffff) return power_fail(w,J313_PMGR_GATE_ID);
+  if(!power(w,(uint16_t)id)) return 0;
  }
  return 1;
 }
 static int ParseResources(const void *blob,size_t size,J313_SPI_RESOURCES *out, radt_workspace workspace,
- int ignore_tail, int bypass_identity, uint32_t *identity_mask) {
+ int ignore_tail, int bypass_identity, uint32_t *identity_mask, J313_PMGR_DIAGNOSTIC *pmgr) {
  const unsigned char *b=blob; const radt_property *p; J313_SPI_RESOURCES r;
  struct power_walk walk; size_t n; uint32_t mask=0;
  if(!out) return 1;
@@ -346,22 +360,36 @@ static int ParseResources(const void *blob,size_t size,J313_SPI_RESOURCES *out, 
     r.ApBase!=UINT64_C(0x23c100000) || r.ApSize<196*4 || r.ApSize>0x100000 ||
     r.NubBase!=UINT64_C(0x23d1f0000) || r.NubSize<14*4 || r.NubSize>0x10000 ||
     r.PmgrBase!=UINT64_C(0x23b700000) || r.PmgrSize>0x100000) return 3;
+ memset(&walk,0,sizeof(walk)); walk.b=b; walk.w=&workspace; walk.out=&r; walk.diag=pmgr;
+ if(pmgr) { pmgr->Attempted=1; pmgr->Source=1; }
  p=get(b,&workspace,"/arm-io/spi3","clock-gates");
- if(!p || p->size!=4 || le32(b+p->data)!=0x34) return 4;
- memset(&walk,0,sizeof(walk)); walk.b=b; walk.w=&workspace; walk.out=&r;
+ if(pmgr) { pmgr->GateLength=p?(uint32_t)p->size:UINT32_MAX; if(p && p->size>=4) pmgr->Gate=le32(b+p->data); }
+ if(!p || p->size!=4 || le32(b+p->data)!=0x34) { power_fail(&walk,J313_PMGR_SPI_GATE); return 4; }
  walk.dev=get(b,&workspace,"/arm-io/pmgr","devices"); walk.ps=get(b,&workspace,"/arm-io/pmgr","ps-regs");
- if(!walk.dev || walk.dev->size<96 || walk.dev->size%48 || !walk.ps || !walk.ps->size || walk.ps->size%12) return 4;
+ if(pmgr) { pmgr->DevicesLength=walk.dev?(uint32_t)walk.dev->size:UINT32_MAX; pmgr->PsLength=walk.ps?(uint32_t)walk.ps->size:UINT32_MAX; }
+ if(!walk.dev || walk.dev->size<96 || walk.dev->size%48) { power_fail(&walk,J313_PMGR_DEVICES); return 4; }
+ if(!walk.ps || !walk.ps->size || walk.ps->size%12) {
+  power_fail(&walk,(!walk.ps || !walk.ps->size) && get(b,&workspace,"/arm-io/pmgr","ps-groups")?J313_PMGR_PS_GROUPS:J313_PMGR_PS_REGS); return 4;
+ }
+ /* m1n1 src/pmgr.c:418-421 uses exactly this ID-width heuristic. */
  walk.u8=b[walk.dev->data+3]!=b[walk.dev->data+48+3];
- if(!gates(&walk,"/arm-io/gpio") || !gates(&walk,"/arm-io/nub-gpio") || !power(&walk,0x34) || !r.PowerCount) return 4;
+ if(pmgr) { pmgr->IdWidth=walk.u8?8:16; pmgr->Source=2; pmgr->Gate=UINT32_MAX; }
+ if(!gates(&walk,"/arm-io/gpio")) return 4;
+ if(pmgr) { pmgr->Source=3; pmgr->Gate=UINT32_MAX; }
+ if(!gates(&walk,"/arm-io/nub-gpio")) return 4;
+ if(pmgr) { pmgr->Source=1; pmgr->Gate=0x34; pmgr->GateLength=4; }
+ if(!power(&walk,0x34)) return 4;
+ if(!r.PowerCount) { power_fail(&walk,J313_PMGR_EMPTY); return 4; }
  /* In the experimental branch these constants are assumptions, NOT verified
   * identity, even when mask is zero. Resource/address checks above still apply. */
  memcpy(r.TargetType,"j313",5); r.ChipId=0x8103; r.ClockGate=0x34;
  *out=r; return 0;
 }
 static int ParseWithPolicy(const void *blob,size_t size,J313_SPI_RESOURCES *out,
- J313_ADT_DIAGNOSTIC *diagnostic, int ignore_tail, int bypass_identity, uint32_t *identity_mask) {
+ J313_ADT_DIAGNOSTIC *diagnostic, int ignore_tail, int bypass_identity, uint32_t *identity_mask, J313_PMGR_DIAGNOSTIC *pmgr) {
  radt_workspace w; int result;
  if(identity_mask) *identity_mask=0;
+ if(pmgr) { memset(pmgr,0,sizeof(*pmgr)); pmgr->Gate=pmgr->Id=pmgr->RecordIndex=pmgr->PsIndex=pmgr->RegIndex=UINT32_MAX; pmgr->DevicesLength=pmgr->PsLength=pmgr->GateLength=UINT32_MAX; }
  memset(&w,0,sizeof(w)); w.diagnostic=diagnostic;
  if(diagnostic) { memset(diagnostic,0,sizeof(*diagnostic)); diagnostic->NodeIndex=SIZE_MAX; diagnostic->Size=size; }
  if(!out) { fail(&w,RADT_ARGUMENT,J313_ADT_ARGUMENT,0,SIZE_MAX,NULL,size,SIZE_MAX); return 1; }
@@ -376,21 +404,25 @@ static int ParseWithPolicy(const void *blob,size_t size,J313_SPI_RESOURCES *out,
  w.nodes=BoardAllocate(w.node_capacity*sizeof(*w.nodes));
  w.props=BoardAllocate(w.prop_capacity*sizeof(*w.props));
  if(!w.nodes || !w.props) { fail(&w,RADT_BUDGET,J313_ADT_ALLOCATION,0,SIZE_MAX,NULL,size,SIZE_MAX); if(w.nodes) BoardFree(w.nodes); if(w.props) BoardFree(w.props); return 5; }
- result=ParseResources(blob,size,out,w,ignore_tail,bypass_identity,identity_mask);
+ result=ParseResources(blob,size,out,w,ignore_tail,bypass_identity,identity_mask,pmgr);
  BoardFree(w.props); BoardFree(w.nodes);
  return result;
 }
 int J313BoardResourcesParseEx(const void *blob,size_t size,J313_SPI_RESOURCES *out,
  J313_ADT_DIAGNOSTIC *diagnostic) {
- return ParseWithPolicy(blob,size,out,diagnostic,0,0,NULL);
+ return ParseWithPolicy(blob,size,out,diagnostic,0,0,NULL,NULL);
 }
 int J313BoardResourcesParseContainer(const void *blob,size_t size,J313_SPI_RESOURCES *out,
  J313_ADT_DIAGNOSTIC *diagnostic) {
- return ParseWithPolicy(blob,size,out,diagnostic,1,0,NULL);
+ return ParseWithPolicy(blob,size,out,diagnostic,1,0,NULL,NULL);
 }
 int J313BoardResourcesParseExperimentalIdentityBypass(const void *blob,size_t size,
  J313_SPI_RESOURCES *out,J313_ADT_DIAGNOSTIC *diagnostic,uint32_t *identity_mask) {
- return ParseWithPolicy(blob,size,out,diagnostic,1,1,identity_mask);
+ return ParseWithPolicy(blob,size,out,diagnostic,1,1,identity_mask,NULL);
+}
+int J313BoardResourcesParseDetailed(const void *blob,size_t size,J313_SPI_RESOURCES *out,
+ J313_ADT_DIAGNOSTIC *diagnostic,uint32_t *identity_mask,J313_PMGR_DIAGNOSTIC *pmgr) {
+ return ParseWithPolicy(blob,size,out,diagnostic,1,1,identity_mask,pmgr);
 }
 int J313BoardResourcesParse(const void *blob,size_t size,J313_SPI_RESOURCES *out) {
  return J313BoardResourcesParseEx(blob,size,out,NULL);
@@ -398,8 +430,8 @@ int J313BoardResourcesParse(const void *blob,size_t size,J313_SPI_RESOURCES *out
 #ifndef J313_HOST_TEST
 EFI_STATUS J313BoardResourcesLoadEx(J313_SPI_RESOURCES *Resources, J313_BOOT_DIAGNOSTIC *Snapshot) {
  VOID *Hob; APPLE_ADT_INFO_HOB *Info; VOID *Copy; int Result;
- J313_ADT_DIAGNOSTIC Diagnostic; uint32_t IdentityMask;
- if(Snapshot) Snapshot->Valid &= ~(J313_DIAG_RESOURCE_VALID | J313_DIAG_IDENTITY_VALID);
+ J313_ADT_DIAGNOSTIC Diagnostic; uint32_t IdentityMask; J313_PMGR_DIAGNOSTIC Pmgr;
+ if(Snapshot) Snapshot->Valid &= ~(J313_DIAG_RESOURCE_VALID | J313_DIAG_IDENTITY_VALID | J313_DIAG_PMGR_VALID);
  if(Resources==NULL) return EFI_INVALID_PARAMETER;
  ZeroMem(Resources,sizeof(*Resources));
  Hob=GetFirstGuidHob(&gAppleSiliconPkgAdtInfoHobGuid);
@@ -413,8 +445,16 @@ EFI_STATUS J313BoardResourcesLoadEx(J313_SPI_RESOURCES *Resources, J313_BOOT_DIA
  if(Copy==NULL) return EFI_OUT_OF_RESOURCES;
  /* J313-only EXPERIMENTAL: assume identity, retain all resource checks and
   * the full reserved HOB span; ignore only the counted root tail. */
- Result=J313BoardResourcesParseExperimentalIdentityBypass(Copy,(UINTN)Info->AdtSize,Resources,&Diagnostic,&IdentityMask);
+ Result=J313BoardResourcesParseDetailed(Copy,(UINTN)Info->AdtSize,Resources,&Diagnostic,&IdentityMask,&Pmgr);
  if(Snapshot) {
+  if(Pmgr.Attempted) {
+   Snapshot->Valid |= J313_DIAG_PMGR_VALID;
+   Snapshot->PmgrReason=Pmgr.Reason; Snapshot->PmgrSource=Pmgr.Source;
+   Snapshot->PmgrGate=Pmgr.Gate; Snapshot->PmgrId=Pmgr.Id; Snapshot->PmgrIdWidth=Pmgr.IdWidth;
+   Snapshot->PmgrDevicesLength=Pmgr.DevicesLength; Snapshot->PmgrPsLength=Pmgr.PsLength;
+   Snapshot->PmgrRecordIndex=Pmgr.RecordIndex; Snapshot->PmgrPsIndex=Pmgr.PsIndex;
+   Snapshot->PmgrRegIndex=Pmgr.RegIndex; Snapshot->PmgrGateLength=Pmgr.GateLength;
+  }
   Snapshot->ResourceCode=(UINT32)Result; Snapshot->Valid |= J313_DIAG_RESOURCE_VALID;
   if(Diagnostic.TreeComplete) { Snapshot->IdentityMask=IdentityMask; Snapshot->Valid |= J313_DIAG_IDENTITY_VALID; }
  }
