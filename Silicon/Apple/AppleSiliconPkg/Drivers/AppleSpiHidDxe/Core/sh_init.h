@@ -25,7 +25,9 @@ struct sh_init_action {
 /* Caller-opaque fields; one externally serialized context, no overlapping
  * context/action/input buffers. Zero allocation, no MMIO or HID installation. */
 struct sh_init {
-    enum sh_init_phase phase;
+    enum sh_init_phase phase, failure_phase;
+    int failure_detail, reject_detail;
+    unsigned reject_mask; /* retained through terminal stop */
     uint64_t last_ms, started_ms;
     unsigned next_id, events, requests, accepted, rejected;
     uint8_t pending_id, pending_type, pending_iface;

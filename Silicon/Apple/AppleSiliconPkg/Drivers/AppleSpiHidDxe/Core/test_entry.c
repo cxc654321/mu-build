@@ -14,7 +14,7 @@ static EFI_LOADED_IMAGE_PROTOCOL image;
 static J313_BOOT_DIAGNOSTIC *table;
 static unsigned alloc_fail, install_fail;
 static UINT32 injected_stage;
-static unsigned skip_photo;
+static unsigned skip_photo, bus_fail_op;
 #define INJECT(stage) do { if(injected_stage==(stage)) return EFI_DEVICE_ERROR; } while(0)
 static EFI_STATUS EFIAPI allocate(EFI_MEMORY_TYPE type, UINTN n, VOID **p) {
  (VOID)type;
@@ -84,9 +84,9 @@ EFI_STATUS J313BoardResourcesLoadEx(J313_SPI_RESOURCES *r, J313_BOOT_DIAGNOSTIC 
 J313_SPI_STATUS J313SpiTransportInit(J313_SPI_TRANSPORT*t,const J313_SPI_RESOURCES*r,const J313_SPI_IO*i)
 {(VOID)r;(VOID)i;if(injected_stage==J313StageSpiInit)return (J313_SPI_STATUS)1;t->Initialized=true;initialized++;return J313_SPI_OK;}
 void J313SpiTransportStop(J313_SPI_TRANSPORT*t) {if(t->Initialized){stopped++;t->Initialized=false;}}
-J313_SPI_STATUS J313SpiTransportReady(J313_SPI_TRANSPORT*t,bool*r) {CHECK(t->Initialized);*r=true;return J313_SPI_OK;}
-J313_SPI_STATUS J313SpiTransportReadPacket(J313_SPI_TRANSPORT*t,uint8_t*p) {(VOID)p;CHECK(t->Initialized);reads++;return J313_SPI_OK;}
-J313_SPI_STATUS J313SpiTransportWritePacket(J313_SPI_TRANSPORT*t,const uint8_t*p) {(VOID)p;CHECK(t->Initialized);return J313_SPI_OK;}
+J313_SPI_STATUS J313SpiTransportReady(J313_SPI_TRANSPORT*t,bool*r) {CHECK(t->Initialized);*r=true;return bus_fail_op==2?J313_SPI_IO_ERROR:J313_SPI_OK;}
+J313_SPI_STATUS J313SpiTransportReadPacket(J313_SPI_TRANSPORT*t,uint8_t*p) {(VOID)p;CHECK(t->Initialized);reads++;t->LastTransfer.rx_completed=17;t->LastTransfer.tx_queued=32;t->LastTransfer.tx_completed=17;t->LastTransfer.status=PIO_TIMEOUT;return bus_fail_op==3?J313_SPI_TIMEOUT:J313_SPI_OK;}
+J313_SPI_STATUS J313SpiTransportWritePacket(J313_SPI_TRANSPORT*t,const uint8_t*p) {(VOID)p;CHECK(t->Initialized);t->LastAck=0x12345678;return bus_fail_op==5?J313_SPI_ACK_ERROR:J313_SPI_OK;}
 EFI_STATUS J313KeyboardCreate(J313_KEYBOARD**k) {if(create_fail){*k=NULL;return EFI_OUT_OF_RESOURCES;}*k=&keyboard;return EFI_SUCCESS;}
 EFI_STATUS J313KeyboardPublish(J313_KEYBOARD*k) {INJECT(J313StagePublish);CHECK(k==&keyboard);published++;return EFI_SUCCESS;}
 EFI_HANDLE J313KeyboardHandle(J313_KEYBOARD*k) {return k;}
@@ -96,12 +96,12 @@ void js_start(struct j313_session*s,uint64_t n) {(VOID)n;s->phase=JS_INIT;}
 void js_stop(struct j313_session*s) {s->phase=JS_STOPPED;}
 int js_tick(struct j313_session*s,uint64_t n) {(VOID)n;return s->phase==JS_STOPPED?JS_ERROR:JS_WAIT;}
 int js_packet(struct j313_session*s,uint64_t n,const uint8_t*p,struct sh_init_action*a,hk_result*k)
-{(VOID)n;(VOID)p;(VOID)a;(VOID)k;if(handshake_fail)return JS_ERROR;if(s->phase==JS_INIT){s->phase=JS_READY;return JS_PUBLISH;}return JS_KEYS;}
+{(VOID)n;(VOID)p;(VOID)a;(VOID)k;if(bus_fail_op==5)return JS_TX;if(handshake_fail){s->failure_domain=JS_DOMAIN_PACKET;s->failure_phase=SH_INIT_DEVICE;s->failure_detail=SH_PACKET_CRC;return JS_ERROR;}if(s->phase==JS_INIT){s->phase=JS_READY;return JS_PUBLISH;}return JS_KEYS;}
 static void reset(void)
 {
  CHECK(mContext==NULL); if(table) free(table); table=NULL; mDiagnostic=NULL; mDiagnosticAttempted=FALSE; alloc_fail=install_fail=0; board_fail=handshake_fail=destroy_fail=close_fail=create_fail=0;
  initialized=stopped=published=connected=updated=fed=reads=0;clock_ms=0;
- injected_stage=skip_photo=0;stalls=photo_polls=0;current_tpl=TPL_APPLICATION;poll_during_stall=FALSE;
+ injected_stage=skip_photo=bus_fail_op=0;stalls=photo_polls=0;current_tpl=TPL_APPLICATION;poll_during_stall=FALSE;
 }
 int main(void)
 {
@@ -145,6 +145,7 @@ int main(void)
  reset();handshake_fail=1;CHECK(EFI_ERROR(AppleSpiHidDxeInitialize(NULL,NULL)));
  CHECK(!mContext&&table&&table->Stage==J313StageHandshake&&table->Status==EFI_DEVICE_ERROR);
  CHECK(table->Valid&J313_DIAG_CLEANUP_VALID);CHECK(table->CleanupStatus==EFI_SUCCESS);
+ CHECK(table->HidFrozen&&table->HidOp==4&&table->HidDomain==JS_DOMAIN_PACKET&&table->HidPhase==SH_INIT_DEVICE&&table->HidDetail==SH_PACKET_CRC);
  mDiagnostic=NULL;CHECK(table->Stage==J313StageHandshake); /* simulate driver image gone */
  reset();alloc_fail=1;CHECK(AppleSpiHidDxeInitialize(NULL,NULL)==EFI_SUCCESS);CHECK(!table);CHECK(AppleSpiHidDxeUnload(NULL)==EFI_SUCCESS);
  reset();install_fail=1;CHECK(AppleSpiHidDxeInitialize(NULL,NULL)==EFI_SUCCESS);CHECK(!table);CHECK(AppleSpiHidDxeUnload(NULL)==EFI_SUCCESS);
@@ -157,6 +158,17 @@ int main(void)
  injected_stage=0;if(mContext)CHECK(AppleSpiHidDxeUnload(NULL)==EFI_SUCCESS);
  }}
  reset();
+ {unsigned ops[]={2,3,5},i;for(i=0;i<3;i++){
+ reset();bus_fail_op=ops[i];skip_photo=1;destroy_fail=1;
+ CHECK(AppleSpiHidDxeInitialize(NULL,NULL)==EFI_SUCCESS);
+ CHECK(table->HidFrozen&&table->HidOp==ops[i]&&table->HidDomain==7);
+ CHECK(table->BusCode==0&&table->Stage==J313StageHandshake&&!published);
+ CHECK(table->HidReads==(ops[i]==5?1u:0u)&&table->HidWrites==0);
+ if(ops[i]==3) CHECK(table->HidRxCompleted==17&&table->HidTxQueued==32&&table->HidBus==J313_SPI_TIMEOUT);
+ if(ops[i]==5) CHECK(table->HidAck==0x12345678&&table->HidBus==J313_SPI_ACK_ERROR);
+ destroy_fail=0;CHECK(AppleSpiHidDxeUnload(NULL)==EFI_SUCCESS);
+ CHECK(table->HidOp==ops[i]&&table->HidDomain==7);
+ }reset();}
  puts("snapshot lifetime and best-effort publication PASS");
  puts("production entry: board gate, handshake gate, console, EBS, retained cleanup PASS");
  puts("photo delay: each entry path, retained cleanup, live polling, high-TPL skip PASS");return 0;

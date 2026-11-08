@@ -30,9 +30,7 @@ VOID EFIAPI DebugPrint(UINTN level,CONST CHAR8 *fmt,...) {
  (VOID)level;
  va_list ap;CHECK(tpl==TPL_APPLICATION);lines++;unknown+=contains(fmt,"UNKNOWN");
  va_start(ap,fmt);
- if(contains(fmt,"Resource code=%"))resource=va_arg(ap,UINT32);
- if(contains(fmt,"Identity mask=%"))identity=va_arg(ap,UINT32);
- if(contains(fmt,"SPI init buscode=%"))bus=va_arg(ap,UINT32);
+ if(contains(fmt,"Resource=%")){resource=va_arg(ap,UINT32);identity=va_arg(ap,UINT32);bus=va_arg(ap,UINT32);}
  if(contains(fmt,"J313 stage=")){stage=va_arg(ap,UINT32);status=va_arg(ap,UINT64);}
  va_end(ap);
 }
@@ -47,10 +45,11 @@ int main(void){
  J313DiagnosticSummary();CHECK(lines==1&&unknown==1&&stalls==1&&bottom==0);
  table.VendorGuid=guid;table.VendorTable=&d;st.ConfigurationTable=&table;st.NumberOfTableEntries=1;
  reset();d.Version=1;d.Size=56;J313DiagnosticSummary();CHECK(lines==1&&unknown==1&&stalls==1);
+ reset();d.Version=2;d.Size=sizeof(d);J313DiagnosticSummary();CHECK(lines==1&&unknown==1&&stalls==1);
  reset();d.Version=99;J313DiagnosticSummary();CHECK(lines==1&&unknown==1&&stalls==1);
  reset();d.Version=J313_DIAG_VERSION;d.Size=sizeof(d)-1;J313DiagnosticSummary();CHECK(unknown==1&&lines==1);
- reset();d.Size=sizeof(d);J313DiagnosticSummary();CHECK(lines==6&&unknown==5&&stalls==1);
- d.Valid=J313_DIAG_RESOURCE_VALID|J313_DIAG_IDENTITY_VALID|J313_DIAG_BUS_VALID|J313_DIAG_CLEANUP_VALID|J313_DIAG_PMGR_VALID;
+ reset();d.Size=sizeof(d);J313DiagnosticSummary();CHECK(lines==5&&unknown==3&&stalls==1);
+ d.Valid=J313_DIAG_RESOURCE_VALID|J313_DIAG_IDENTITY_VALID|J313_DIAG_BUS_VALID|J313_DIAG_CLEANUP_VALID|J313_DIAG_PMGR_VALID|J313_DIAG_HID_VALID;
  for(i=0;i<=5;i++) {reset();d.ResourceCode=i;d.IdentityMask=31;d.BusCode=i;d.Stage=J313StageBoard;d.Status=EFI_UNSUPPORTED;
  J313DiagnosticSummary();CHECK(lines==7&&unknown==0&&resource==i&&identity==31&&bus==i&&stage==J313StageBoard&&status==EFI_UNSUPPORTED);}
  for(i=TPL_CALLBACK;i<=TPL_HIGH_LEVEL;i++){reset();tpl=i;J313DiagnosticSummary();CHECK(!lines&&!stalls&&!bottom&&tpl==i);}

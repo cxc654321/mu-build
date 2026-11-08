@@ -18,6 +18,8 @@ struct mock {
  uint64_t now,enable_time[8],run_time[8],stop_time[8];
  bool power_stuck,stuck,frozen,bad_ack,ready,reverse;
  unsigned fail_power;
+ bool finish_between_reads,premature_tx;
+ unsigned read_completions;
 };
 static uint32_t *reg(struct mock *m,uint64_t a) {
  assert(!(a&3));
@@ -31,7 +33,16 @@ static uint32_t *reg(struct mock *m,uint64_t a) {
 static uint32_t rd(void *c,uint64_t a) {
  struct mock *m=c; ++m->reads;
  if(a==NUB+52) return (*reg(m,a)&~1u)|!m->ready;
- if(a==SPI+P_FIFOSTAT) return m->tn<<8|m->rn<<24;
+ if(a==SPI+P_FIFOSTAT||a==SPI+P_IF_XFER) {
+  uint32_t v=a==SPI+P_FIFOSTAT ? m->tn<<8|m->rn<<24 : m->spi[P_IF_XFER/4];
+  /* Snapshot the first read, then retire the actual last queued byte before
+   * the other MMIO read. Independent of which register is sampled first. */
+  if(m->finish_between_reads&&(m->spi[P_CTRL/4]&P_RUN)&&m->tn==1&&
+     m->sent+1==m->spi[P_TXCNT/4]) {
+   --m->tn;++m->sent;m->spi[P_IF_XFER/4]|=P_TX_DONE;++m->read_completions;
+  }
+  return v;
+ }
  if(a==SPI+P_RXDATA) {
   static const uint8_t ack[]={0xac,0x27,0x68,0xd5};
   uint32_t v;
@@ -74,7 +85,9 @@ static void delay(void *c,uint32_t us) {
  if(m->reverse)m->now-=us;
  else if(!m->frozen)m->now+=us;
  if(!(m->spi[P_CTRL/4]&P_RUN)||m->stuck)return;
- if(m->tn){--m->tn;++m->sent;}
+ /* Leave the last byte for progress between the two MMIO snapshots. */
+ if(m->tn&&!(m->finish_between_reads&&m->tn==1&&m->sent+1==m->spi[P_TXCNT/4])){--m->tn;++m->sent;}
+ if(m->premature_tx&&m->sent)m->spi[P_IF_XFER/4]|=P_TX_DONE;
  if(m->produced<m->spi[P_RXCNT/4]&&m->rn<16){++m->rn;++m->produced;}
  if(m->spi[P_TXCNT/4]&&m->sent==m->spi[P_TXCNT/4])m->spi[P_IF_XFER/4]|=P_TX_DONE;
  if(m->spi[P_RXCNT/4]&&m->produced==m->spi[P_RXCNT/4])m->spi[P_IF_XFER/4]|=P_RX_DONE;
@@ -147,4 +160,26 @@ static void faults(void) {
   clean(&m,&t);
  }
 }
-int main(void){success();invalid();faults();puts("production transport mock tests: PASS");return 0;}
+static void completion_between_reads(void) {
+ for(unsigned bad=0;bad<2;++bad) {
+  struct mock m={0};J313_SPI_TRANSPORT t={0};J313_SPI_RESOURCES r=resources();J313_SPI_IO i=io(&m);
+  uint8_t packet[256]={0};
+  assert(J313SpiTransportInit(&t,&r,&i)==J313_SPI_OK);
+  m.finish_between_reads=true;m.bad_ack=bad;
+  assert(J313SpiTransportWritePacket(&t,packet)==(bad?J313_SPI_ACK_ERROR:J313_SPI_OK));
+  assert(m.read_completions==1);
+  assert(t.LastTransfer.status==PIO_OK&&t.LastTransfer.tx_queued==256&&t.LastTransfer.tx_completed==256);
+  assert(t.LastTransfer.segments_completed==2&&t.LastTransfer.rx_completed==4);
+  if(bad)clean(&m,&t);else {J313SpiTransportStop(&t);clean(&m,&t);}
+ }
+}
+static void premature_completion(void) {
+ struct mock m={0};J313_SPI_TRANSPORT t={0};J313_SPI_RESOURCES r=resources();J313_SPI_IO i=io(&m);
+ uint8_t packet[256]={0};
+ assert(J313SpiTransportInit(&t,&r,&i)==J313_SPI_OK);m.premature_tx=true;
+ assert(J313SpiTransportWritePacket(&t,packet)==J313_SPI_IO_ERROR);
+ assert(t.LastTransfer.status==PIO_PREMATURE_TX&&t.LastTransfer.tx_queued<256);
+ assert(!t.LastTransfer.segments_completed&&!t.LastTransfer.rx_completed&&m.runs==1);
+ clean(&m,&t);
+}
+int main(void){success();invalid();faults();premature_completion();completion_between_reads();puts("production transport mock tests: PASS");return 0;}

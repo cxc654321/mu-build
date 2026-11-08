@@ -49,13 +49,20 @@ int main(void)
  assert(packet(0x20,2,0x10,0,0,0,0,report,6)==JS_WAIT);
  for(unsigned i=0;i<8;i++)assert(js_packet(&s,2,p,&a,&keys)==(i==7?JS_ERROR:JS_DROP));
  assert(s.phase==JS_FAILED);assert(js_tick(&s,3)==JS_ERROR);
- handshake(1);assert(s.phase==JS_FAILED); /* no publish on invalid descriptor */
+ handshake(1);assert(s.phase==JS_FAILED);
+ assert(s.failure_domain==JS_DOMAIN_DESCRIPTOR && s.failure_phase==SH_INIT_DONE);
+ {int detail=s.failure_detail;js_stop(&s);assert(js_tick(&s,2)==JS_ERROR);
+ assert(s.failure_domain==JS_DOMAIN_DESCRIPTOR && s.failure_detail==detail);}
+ /* no publish on invalid descriptor */
  js_start(&s,0);assert(js_tick(&s,1000)==JS_ERROR);
+ assert(s.failure_phase==SH_INIT_BOOT && s.failure_domain==JS_DOMAIN_INIT && s.failure_detail==SH_INIT_TIMEOUT);
+ js_stop(&s);assert(s.failure_phase==SH_INIT_BOOT);
  start();assert(js_tick(&s,1000)==JS_ERROR); /* request deadline */
  js_start(&s,10);assert(js_tick(&s,9)==JS_ERROR);
  handshake(0);js_stop(&s);assert(js_packet(&s,2,p,&a,&keys)==JS_ERROR && !keys.count);
  start();assert(packet(0x40,0xd0,0x20,1,0xd0,99,0,report,6)==JS_DROP); /* wrong ID: never accepted */
  assert(s.phase==JS_INIT && s.init.requests==1 && s.init.started_ms==0);
+ assert(s.init.reject_detail==3 && s.init.reject_mask==32);
  assert(js_tick(&s,1000)==JS_ERROR); /* unrelated replies cannot extend deadline */
  start();
  assert(packet(0x20,2,0x10,0,0,0,0,report,6)==JS_DROP); /* touch report interleaved */
@@ -69,6 +76,13 @@ int main(void)
  handshake(0);memset(p,0,sizeof(p));p[0]=0x20;p[1]=1;p[4]=10;p[6]=1;
  le(p+254,sh_crc16(p,254));assert(js_packet(&s,2,p,&a,&keys)==JS_WAIT);
  assert(js_tick(&s,102)==JS_ERROR); /* fragment cannot live indefinitely */
+ assert(s.failure_domain==JS_DOMAIN_FRAGMENT);
+ start();memset(p,0,sizeof(p));p[1]=1;
+ assert(js_packet(&s,2,p,&a,&keys)==JS_ERROR);
+ assert(s.failure_domain==JS_DOMAIN_PACKET && s.failure_detail==SH_PACKET_CRC && s.failure_phase==SH_INIT_DEVICE);
+ js_start(&s,0);assert(js_packet(&s,0,p,&a,&keys)==JS_DROP);
+ assert(s.init.reject_detail==2);assert(js_tick(&s,1000)==JS_ERROR);
+ assert(s.failure_detail==SH_INIT_TIMEOUT && s.init.reject_detail==2);
  puts("production session: handshake, live descriptor, keys, bounds, stop PASS");
  return 0;
 }

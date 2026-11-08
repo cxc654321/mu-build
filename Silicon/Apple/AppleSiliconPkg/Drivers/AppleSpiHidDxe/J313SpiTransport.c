@@ -230,6 +230,8 @@ J313_SPI_STATUS J313SpiTransportWritePacket(J313_SPI_TRANSPORT *t, const uint8_t
   if (!packet) return J313_SPI_INVALID;
   status = Transaction(t,s,2);
   if (status != J313_SPI_OK) return status;
+  t->LastAck = (uint32_t)ack[0] | ((uint32_t)ack[1]<<8) |
+               ((uint32_t)ack[2]<<16) | ((uint32_t)ack[3]<<24);
   if (ack[0]!=0xac || ack[1]!=0x27 || ack[2]!=0x68 || ack[3]!=0xd5) {
     Quiesce(t); return J313_SPI_ACK_ERROR;
   }

@@ -9,6 +9,7 @@ static uint16_t le16(const uint8_t *p)
 { return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8)); }
 static int stop(struct sh_init *s, struct sh_init_action *a, int error)
 {
+    if (!s->failure_detail) { s->failure_phase = s->phase; s->failure_detail = error; }
     s->phase = a->phase = SH_INIT_FAILED;
     memset(s->descriptor, 0, sizeof(s->descriptor));
     memset(s->descriptor_length, 0, sizeof(s->descriptor_length));
@@ -54,8 +55,14 @@ static int event(struct sh_init *s, struct sh_init_action *a)
     ++s->events;
     return SH_INIT_WAIT;
 }
-static int reject(struct sh_init *s)
-{ ++s->rejected; return SH_INIT_REJECT; }
+/* Stable rejection reasons: 1 boot shape, 2 outer CRC, 3 correlation,
+ * 4 device descriptor, 5 interface descriptor. No acceptance policy change. */
+static int reject(struct sh_init *s, int reason)
+{
+    s->reject_detail = reason;
+    if (reason != 3) s->reject_mask = 0;
+    ++s->rejected; return SH_INIT_REJECT;
+}
 static int request(struct sh_init *s, uint64_t now, struct sh_init_action *a)
 {
     uint8_t type, iface;
@@ -89,12 +96,13 @@ int sh_init_boot_packet(struct sh_init *s, uint64_t now,
     if (r != SH_INIT_WAIT) return r;
     if ((r = event(s, a)) != SH_INIT_WAIT) return r;
     if (s->phase != SH_INIT_BOOT || !p || n != SH_PACKET_SIZE)
-        return reject(s);
+        return reject(s, 1);
     /* Upstream does not constrain boot flags/device; do not invent values.
      * Reject fragments conservatively; short notification has no inner CRC. */
-    if (sh_crc16(p, 254) != le16(p + 254) || le16(p + 2) != 0 ||
+    if (sh_crc16(p, 254) != le16(p + 254)) return reject(s, 2);
+    if (le16(p + 2) != 0 ||
         le16(p + 4) != 0 || le16(p + 6) != 4 || memcmp(p + 8, boot, 4))
-        return reject(s);
+        return reject(s, 1);
     ++s->accepted; s->phase = SH_INIT_DEVICE;
     return request(s, now, a);
 }
@@ -110,22 +118,30 @@ int sh_init_message(struct sh_init *s, uint64_t now,
     int r = begin(s, now, a);
     if (r != SH_INIT_WAIT) return r;
     if ((r = event(s, a)) != SH_INIT_WAIT) return r;
-    if (s->phase == SH_INIT_BOOT || !m || !m->payload || !m->length ||
-        m->length > SH_INIT_DESC_MAX || m->flags != 0x40 ||
-        m->device != 0xd0 || m->unknown0 != 0x20 ||
-        m->unknown1 != s->pending_type || m->unknown2 != s->pending_iface ||
-        m->id != s->pending_id || m->response_length != s->pending_response)
-        return reject(s);
+    if (s->phase == SH_INIT_BOOT || !m || !m->payload) {
+        s->reject_mask = 256; return reject(s, 3);
+    }
+    {
+        unsigned mask = (!m->length || m->length > SH_INIT_DESC_MAX) ? 128u : 0u;
+        if (m->flags != 0x40) mask |= 1u;
+        if (m->device != 0xd0) mask |= 2u;
+        if (m->unknown0 != 0x20) mask |= 4u;
+        if (m->unknown1 != s->pending_type) mask |= 8u;
+        if (m->unknown2 != s->pending_iface) mask |= 16u;
+        if (m->id != s->pending_id) mask |= 32u;
+        if (m->response_length != s->pending_response) mask |= 64u;
+        if (mask) { s->reject_mask = mask; return reject(s, 3); }
+    }
     p = m->payload;
     switch (s->phase) {
     case SH_INIT_DEVICE:
         if (m->length < 24 || le16(p + 4) < 3 || !le16(p + 6) ||
             !span(p, m->length, 12) || !span(p, m->length, 16) ||
-            !span(p, m->length, 20)) return reject(s);
+            !span(p, m->length, 20)) return reject(s, 4);
         s->phase = SH_INIT_IFACE1; break;
     case SH_INIT_IFACE1: case SH_INIT_IFACE2:
         if (m->length < 16 || p[1] != s->pending_iface ||
-            !le16(p + 6) || !span(p, m->length, 12)) return reject(s);
+            !le16(p + 6) || !span(p, m->length, 12)) return reject(s, 5);
         s->phase = s->phase == SH_INIT_IFACE1 ? SH_INIT_IFACE2 : SH_INIT_DESC1;
         break;
     case SH_INIT_DESC1: case SH_INIT_DESC2: {

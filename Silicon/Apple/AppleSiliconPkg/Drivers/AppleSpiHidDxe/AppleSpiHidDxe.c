@@ -95,6 +95,29 @@ STATIC UINT64 NowMs (VOID)
   return GetTimeInNanoSecond (GetPerformanceCounter ()) / 1000000ULL;
 }
 
+/* Capture before Stop/free; first fatal is immutable even during cleanup.
+ * Counters are successful packet calls, PIO counts are actual last transaction. */
+STATIC VOID DiagnosticHid (J313_CONTEXT *C, UINT32 Op, UINT32 Bus, UINT32 Domain)
+{
+  J313_BOOT_DIAGNOSTIC *D = mDiagnostic;
+  if (D == NULL || D->HidFrozen) return;
+  D->Valid |= J313_DIAG_HID_VALID;
+  D->HidOp = Op; D->HidBus = Bus;
+  D->HidPhase = C->Session.failure_domain ? C->Session.failure_phase : C->Session.init.phase;
+  D->HidDomain = Domain ? Domain : C->Session.failure_domain;
+  D->HidDetail = C->Session.failure_domain ? C->Session.failure_detail : C->Session.detail;
+  D->HidReject = C->Session.init.reject_detail;
+  D->HidRejectMask = C->Session.init.reject_mask;
+  D->HidPioStatus = C->Transport.LastTransfer.status;
+  D->HidPioSegments = (UINT32)C->Transport.LastTransfer.segments_completed;
+  D->HidPioFlags = C->Transport.LastTransfer.fifo_error_flags;
+  D->HidTxQueued = C->Transport.LastTransfer.tx_queued;
+  D->HidTxCompleted = C->Transport.LastTransfer.tx_completed;
+  D->HidRxCompleted = C->Transport.LastTransfer.rx_completed;
+  D->HidAck = C->Transport.LastAck;
+  if (D->HidDomain) D->HidFrozen = 1;
+}
+
 /* Timer and ExitBootServices share TPL_NOTIFY: no mid-transaction teardown. */
 STATIC VOID Stop (J313_CONTEXT *C)
 {
@@ -107,23 +130,32 @@ STATIC VOID Stop (J313_CONTEXT *C)
 
 STATIC int Pump (J313_CONTEXT *C)
 {
-  J313_SPI_STATUS Bus;
+  J313_SPI_STATUS Bus = J313_SPI_OK;
+  UINT32 Op = 1, Domain = 0;
   EFI_STATUS Status = EFI_DEVICE_ERROR;
   bool Ready;
   int Result;
   if (C->Stopped) return JS_ERROR;
+  if (mDiagnostic != NULL && !mDiagnostic->HidFrozen) ++mDiagnostic->HidPolls;
   Result = js_tick (&C->Session, NowMs ());
   if (Result == JS_ERROR) goto Failed;
+  Op = 2;
   Bus = J313SpiTransportReady (&C->Transport, &Ready);
   if (Bus != J313_SPI_OK) goto BusFailed;
-  if (!Ready) return JS_WAIT;
+  if (!Ready) { DiagnosticHid (C, Op, Bus, 0); return JS_WAIT; }
+  if (mDiagnostic != NULL && !mDiagnostic->HidFrozen) ++mDiagnostic->HidReady;
   /* Exactly one read and at most one response request per invocation. */
+  Op = 3;
   Bus = J313SpiTransportReadPacket (&C->Transport, C->Packet);
   if (Bus != J313_SPI_OK) goto BusFailed;
+  if (mDiagnostic != NULL && !mDiagnostic->HidFrozen) ++mDiagnostic->HidReads;
+  Op = 4;
   Result = js_packet (&C->Session, NowMs (), C->Packet, &C->Action, &C->Keys);
   if (Result == JS_TX) {
+    Op = 5;
     Bus = J313SpiTransportWritePacket (&C->Transport, C->Action.packet);
     if (Bus != J313_SPI_OK) goto BusFailed;
+    if (mDiagnostic != NULL && !mDiagnostic->HidFrozen) ++mDiagnostic->HidWrites;
   } else if (Result == JS_KEYS && C->Published) {
     if (!C->KeySeen && C->Keys.count != 0) {
       C->KeySeen = TRUE;
@@ -138,15 +170,20 @@ STATIC int Pump (J313_CONTEXT *C)
       if (Status != EFI_OUT_OF_RESOURCES) goto Failed;
     }
   } else if (Result == JS_DROP) {
+    if (mDiagnostic != NULL && !mDiagnostic->HidFrozen) ++mDiagnostic->HidDrops;
     if (!C->DropWarning) {
       C->DropWarning = TRUE;
       DEBUG ((DEBUG_WARN, "J313-SPI DROP detail=%d errors=%u\n", C->Session.detail, C->Session.errors));
     }
   } else if (Result == JS_ERROR) goto Failed;
+  DiagnosticHid (C, Op, Bus, 0);
   return Result;
 BusFailed:
+  Domain = 7;
   DEBUG ((DEBUG_ERROR, "J313-SPI BUS-FAIL status=%u\n", (UINT32)Bus));
 Failed:
+  DiagnosticHid (C, Op, Bus, Domain);
+  if (mDiagnostic != NULL) mDiagnostic->HidFrozen = 1;
   DiagnosticStatus (J313StagePump, Status);
   DEBUG ((DEBUG_ERROR, "J313-SPI STOP phase=%u detail=%d\n", (UINT32)C->Session.init.phase, C->Session.detail));
   Stop (C);
@@ -257,6 +294,7 @@ EFI_STATUS EFIAPI AppleSpiHidDxeInitialize (EFI_HANDLE ImageHandle, EFI_SYSTEM_T
   }
   Started = NowMs ();
   js_start (&C->Session, Started);
+  DiagnosticHid (C, 1, J313_SPI_OK, 0);
   Status = gBS->SetTimer (C->Timer, TimerPeriodic, POLL_100NS);
   DiagnosticStatus (J313StageStartTimer, Status);
   if (EFI_ERROR (Status)) goto Fail;
@@ -265,7 +303,7 @@ EFI_STATUS EFIAPI AppleSpiHidDxeInitialize (EFI_HANDLE ImageHandle, EFI_SYSTEM_T
   DiagnosticStatus (J313StageWait, Status);
     if (EFI_ERROR (Status)) goto Fail;
     Now = NowMs ();
-    if (Now < Started || Now - Started >= 6000) { Status = DiagnosticStatus (J313StageTimeout, EFI_TIMEOUT); goto Fail; }
+    if (Now < Started || Now - Started >= 6000) { DiagnosticHid (C, 6, J313_SPI_OK, 8); Status = DiagnosticStatus (J313StageTimeout, EFI_TIMEOUT); goto Fail; }
     Result = Pump (C);
     if (Result == JS_PUBLISH || Result == JS_ERROR) break;
   }

@@ -56,6 +56,9 @@ static bool transfer(struct engine *e, const struct pio_segment *s) {
  for (;;) {
   uint32_t fs, txlevel, rxlevel, flags;
   if (!check(e) || !errors(e)) return false;
+  /* Sample done before occupancy: the last TX byte may retire between reads.
+   * A newly asserted done flag is safely observed on the next iteration. */
+  flags = rd(e, P_IF_XFER);
   fs = rd(e, P_FIFOSTAT);
   txlevel = (fs >> 8) & 255;
   rxlevel = fs >> 24;
@@ -64,7 +67,6 @@ static bool transfer(struct engine *e, const struct pio_segment *s) {
   }
   e->r.tx_completed += queued - txlevel - retired;
   retired = queued - txlevel;
-  flags = rd(e, P_IF_XFER);
   if (s->tx && (flags & P_TX_DONE) && (queued != s->len || txlevel)) {
    e->r.status = PIO_PREMATURE_TX; return false;
   }

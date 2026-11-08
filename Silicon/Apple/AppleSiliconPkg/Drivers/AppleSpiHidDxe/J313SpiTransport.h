@@ -42,6 +42,7 @@ typedef struct {
   J313_SPI_RESOURCES Resources;
   J313_SPI_IO Io;
   struct pio_result LastTransfer;
+  uint32_t LastAck; /* little-endian raw ACK, valid after completed write */
   bool Initialized, Busy, ControllerLive, GpioLive;
 } J313_SPI_TRANSPORT;
 

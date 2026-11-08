@@ -5,6 +5,9 @@
 #include "hid_keyboard.h"
 enum js_phase { JS_INIT, JS_READY, JS_FAILED, JS_STOPPED };
 enum js_result { JS_WAIT, JS_TX, JS_PUBLISH, JS_KEYS, JS_DROP, JS_ERROR = -1 };
+/* Error domains disambiguate overlapping negative result enums. */
+enum js_domain { JS_DOMAIN_NONE, JS_DOMAIN_INIT, JS_DOMAIN_PACKET,
+ JS_DOMAIN_DESCRIPTOR, JS_DOMAIN_FRAGMENT, JS_DOMAIN_CLOCK, JS_DOMAIN_INPUT };
 struct j313_session {
  enum js_phase phase;
  struct sh_init init;
@@ -14,6 +17,8 @@ struct j313_session {
  uint64_t last_ms, fragment_ms;
  unsigned errors;
  int detail;
+ unsigned failure_domain, failure_phase;
+ int failure_detail;
 };
 void js_start(struct j313_session *s, uint64_t now);
 void js_stop(struct j313_session *s);
